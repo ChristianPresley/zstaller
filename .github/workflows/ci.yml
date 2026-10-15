@@ -39,8 +39,13 @@ jobs:
         run: zig build test --summary all
 
   sample-linux:
-    name: Sample end-to-end (Ubuntu)
-    runs-on: ubuntu-latest
+    name: Sample end-to-end (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The arm64 runner installs and runs the arm64 .deb natively.
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -52,14 +57,20 @@ jobs:
         run: examples/sample/scripts/test-linux.sh
 
       - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
         with:
           name: sample-installers
           path: examples/sample/zig-out/installers/
           if-no-files-found: error
 
   sample-windows:
-    name: Sample end-to-end (Windows)
-    runs-on: windows-latest
+    name: Sample end-to-end (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The ARM64 runner installs and runs the aarch64 MSI and EXE natively.
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -75,6 +86,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: msiexec-logs
+          name: msiexec-logs-${{ matrix.os }}
           path: examples/sample/zig-out/installers/*.log
           if-no-files-found: ignore
