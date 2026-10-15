@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Metadata`: reads `name`, `version`, `description` and `license` from a
+  `build.zig.zon` manifest, with field-level diagnostics for missing or
+  malformed values.
 - Project scaffold: `build.zig`, `build.zig.zon` and a library module that
   builds and tests with Zig 0.16.0.
 - Apache License 2.0, NOTICE file and license headers on source files.
