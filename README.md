@@ -12,12 +12,12 @@ produce ready-to-ship installers in `zig-out/installers/`.
 
 ## Status
 
-> **Early development.** The repository currently contains the project
-> scaffold only. None of the installer generators below are implemented yet.
+> **Early development.** The project scaffold and `build.zig.zon` metadata
+> parsing exist. None of the installer generators below are implemented yet.
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| a | Scaffold, license files, `build.zig.zon` metadata parsing | In progress |
+| a | Scaffold, license files, `build.zig.zon` metadata parsing | Done |
 | b | Cross-compile matrix | Planned |
 | c | Ubuntu `.deb` output (x86_64, aarch64) | Planned |
 | d | Windows EXE installer (x86_64, aarch64) | Planned |
