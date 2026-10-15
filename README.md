@@ -133,6 +133,7 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `icon` | none | `.ico` file for the EXE, Apps & Features and the MSI. |
 | `extra_files` | none | Files installed next to the binary (`source`, `dest`). |
 | `install_subdir` | `"installers"` | Output directory under `zig-out/`. |
+| `source_date_epoch` | `SOURCE_DATE_EPOCH`, else 1980-01-01 | Seconds since the Unix epoch for every timestamp in the packages. See [Reproducible builds](#reproducible-builds). |
 | `windows.publisher` | package name | Publisher and MSI Manufacturer. |
 | `windows.display_name` | package name | Product name shown to users. |
 | `windows.install_dir_name` | display name | Folder created under Program Files. |
@@ -208,9 +209,43 @@ release notes explain how to install, run and remove them.
 
 ## Reproducible builds
 
-All archive timestamps come from `SOURCE_DATE_EPOCH` when it is set, and
-from 1980-01-01 otherwise. MSI product, package and component GUIDs are
-derived from the upgrade code, version and file paths, so the same inputs always give byte-identical installers.
+The same source, Zig version and timestamp give byte-identical installers,
+whatever directory, cache or host (Linux or Windows) builds them. CI builds
+the sample twice at different paths with separate caches, on Linux and on
+Windows, and requires all four builds to match.
+
+- **Timestamps.** Every timestamp written into a package (`.deb` archive
+  entries, MSI summary information and cabinet file dates) is
+  `source_date_epoch` if set, else the `SOURCE_DATE_EPOCH` environment
+  variable, else 1980-01-01. The value is passed to each packaging step as
+  an argument, so changing it rebuilds the installers instead of reusing
+  cached ones. The EXE installer's payload stores no timestamps.
+- **Windows binaries.** The linker derives a PE image's CodeView GUID and
+  its timestamps from the hash of its `.pdb`, which records absolute build
+  and cache paths. zstaller replaces those fields in the application and the
+  EXE installer stub with a SHA-256 of the rest of the image
+  ([`src/platforms/windows/pe.zig`](src/platforms/windows/pe.zig)), so the
+  binaries depend only on their code. This matters on aarch64 Windows,
+  where debug info is kept (see `needsSymbols` in
+  [`src/build/api.zig`](src/build/api.zig)); the `.pdb` stays in the build
+  cache and no longer matches the packaged binary.
+- **GUIDs.** MSI product, package and component GUIDs are derived from the
+  upgrade code, version and file paths.
+
+To reproduce a release, check out the commit and use the
+`SOURCE_DATE_EPOCH` its release notes give (the release workflow uses the
+commit time):
+
+```sh
+git checkout <commit>
+cd examples/sample
+SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" zig build installer
+sha256sum zig-out/installers/*.msi zig-out/installers/*.exe zig-out/installers/*.deb
+```
+
+Compare the sums with the release's `.sha256` files. v0.1.0 was built
+before these fixes, so its aarch64 Windows installers cannot be reproduced
+exactly.
 
 ## Adding a platform
 

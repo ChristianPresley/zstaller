@@ -344,7 +344,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     });
     try db.addRow(media, &.{ .{ .int = 1 }, .{ .int = @intCast(sorted_files.len) }, .null, .{ .str = "#" ++ cabinet_name }, .null, .null });
     var cab_out: Writer.Allocating = .init(a);
-    try cab.write(gpa, &cab_out.writer, cab_files, .mszip);
+    try cab.write(gpa, &cab_out.writer, cab_files, .mszip, p.timestamp);
     try db.addStream(cabinet_name, cab_out.written());
 
     // ---- Icon

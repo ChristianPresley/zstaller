@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Installers are reproducible regardless of build directory, cache
+  location or host. The linker derives Windows binaries' CodeView GUID and
+  timestamps from their .pdb, which holds absolute paths, so aarch64
+  Windows builds (which keep debug info) differed between checkouts. A new
+  pure-Zig step, `zstaller-pack pe-normalize`, replaces those fields in the
+  application and the EXE installer stub with a hash of the image.
+- Changing `SOURCE_DATE_EPOCH` now rebuilds the installers. It was read by
+  the packaging tool from the environment, which the Zig build cache does
+  not track, so cached installers with the old timestamps were reused. The
+  build API now resolves it and passes it as an argument.
+
 ### Added
 
+- `Options.source_date_epoch` sets the package timestamp from build.zig.
+- MSI cabinet file dates follow `SOURCE_DATE_EPOCH` instead of always being
+  1980-01-01.
+- CI builds the sample twice at different paths with separate caches, on
+  Linux and Windows, and requires identical installers across all builds.
+- Release notes record the `SOURCE_DATE_EPOCH` and commit used, with the
+  commands to rebuild the installers byte for byte.
 - Windows installers add a Start Menu shortcut for all users (MSI
   `Shortcut` table; IShellLink in the EXE stub) and remove it on
   uninstall. Turn it off with `.windows.start_menu_shortcut = false`.

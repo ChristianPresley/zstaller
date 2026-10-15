@@ -40,14 +40,39 @@ const header_size = 36;
 const folder_size = 8;
 const file_header_size = 16;
 const data_header_size = 8;
-/// DOS date for 1980-01-01.
-const dos_date: u16 = (1 << 5) | 1;
 const attrib_archive: u16 = 0x20;
 const attrib_utf8_name: u16 = 0x80;
 
 pub const Error = Allocator.Error || Writer.Error || error{ TooManyFiles, TooLarge, InvalidName };
 
-pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Compression) Error!void {
+/// A file date and time in MS-DOS format, as CFFILE stores them.
+pub const DosTime = struct {
+    date: u16,
+    time: u16,
+
+    /// Converts seconds since the Unix epoch (UTC) to DOS format, which
+    /// counts two-second steps from 1980 to 2107; values outside that range
+    /// are clamped.
+    pub fn fromUnix(secs: u64) DosTime {
+        const epoch = std.time.epoch;
+        const min: u64 = epoch.dos;
+        const max: u64 = 4354819199; // 2107-12-31 23:59:59
+        const es: epoch.EpochSeconds = .{ .secs = std.math.clamp(secs, min, max) };
+        const yd = es.getEpochDay().calculateYearDay();
+        const md = yd.calculateMonthDay();
+        const ds = es.getDaySeconds();
+        return .{
+            .date = @intCast((@as(u32, yd.year - 1980) << 9) | (@as(u32, md.month.numeric()) << 5) | (md.day_index + 1)),
+            .time = @intCast((@as(u32, ds.getHoursIntoDay()) << 11) | (@as(u32, ds.getMinutesIntoHour()) << 5) | (ds.getSecondsIntoMinute() / 2)),
+        };
+    }
+};
+
+/// Writes `files` as one cabinet folder. `mtime` (seconds since the Unix
+/// epoch) becomes every file's date; Windows Installer gives installed
+/// files that date.
+pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Compression, mtime: u64) Error!void {
+    const stamp: DosTime = .fromUnix(mtime);
     if (files.len > 0xFFFF) return error.TooManyFiles;
     var total: u64 = 0;
     for (files) |f| {
@@ -131,8 +156,8 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
         try out.writeInt(u32, @intCast(f.data.len), .little);
         try out.writeInt(u32, folder_off, .little);
         try out.writeInt(u16, 0, .little);
-        try out.writeInt(u16, dos_date, .little);
-        try out.writeInt(u16, 0, .little);
+        try out.writeInt(u16, stamp.date, .little);
+        try out.writeInt(u16, stamp.time, .little);
         const ascii = for (f.name) |c| {
             if (c >= 0x80) break false;
         } else true;
@@ -223,7 +248,7 @@ fn roundTrip(files: []const File, compression: Compression) !void {
     const gpa = testing.allocator;
     var out: Writer.Allocating = .init(gpa);
     defer out.deinit();
-    try write(gpa, &out.writer, files, compression);
+    try write(gpa, &out.writer, files, compression, std.time.epoch.dos);
     try testing.expectEqual(@as(u32, @intCast(out.written().len)), std.mem.readInt(u32, out.written()[8..12], .little));
     var got = try extractForTest(gpa, out.written());
     defer {
@@ -266,8 +291,25 @@ test "incompressible data falls back to stored" {
     prng.random().bytes(noise);
     var out: Writer.Allocating = .init(gpa);
     defer out.deinit();
-    try write(gpa, &out.writer, &.{.{ .name = "noise", .data = noise }}, .mszip);
+    try write(gpa, &out.writer, &.{.{ .name = "noise", .data = noise }}, .mszip, std.time.epoch.dos);
     const kind = std.mem.readInt(u16, out.written()[42..44], .little);
     try testing.expect(kind == 0 or kind == 1);
     try roundTrip(&.{.{ .name = "noise", .data = noise }}, .mszip);
+}
+
+test "DosTime.fromUnix" {
+    const at_dos_epoch: DosTime = .fromUnix(std.time.epoch.dos);
+    try std.testing.expectEqual(DosTime{ .date = (1 << 5) | 1, .time = 0 }, at_dos_epoch);
+    // Earlier dates clamp to 1980-01-01.
+    try std.testing.expectEqual(at_dos_epoch, DosTime.fromUnix(0));
+    // 2026-10-15 05:11:41 UTC.
+    try std.testing.expectEqual(DosTime{
+        .date = (46 << 9) | (10 << 5) | 15,
+        .time = (5 << 11) | (11 << 5) | 20,
+    }, DosTime.fromUnix(1792041101));
+    // Later dates clamp to 2107-12-31 23:59:58.
+    try std.testing.expectEqual(DosTime{
+        .date = (127 << 9) | (12 << 5) | 31,
+        .time = (23 << 11) | (59 << 5) | 29,
+    }, DosTime.fromUnix(std.math.maxInt(u64)));
 }

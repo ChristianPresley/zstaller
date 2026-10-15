@@ -65,7 +65,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     payload_run.addArg("--out");
     const payload_bin = payload_run.addOutputFileArg("payload.bin");
     payload_run.addArg("--file");
-    payload_run.addArtifactArg(ctx.binary);
+    payload_run.addFileArg(ctx.binary_file);
     payload_run.addArg(exe_name);
     for (o.extra_files) |f| {
         payload_run.addArg("--file");
@@ -122,7 +122,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         .win32_manifest = manifest,
     });
     stub.subsystem = .windows;
-    return stub.getEmittedBin();
+    return api.normalizePe(b, ctx.pack, ctx.target, stub.getEmittedBin(), stub.out_filename);
 }
 
 fn addMsi(ctx: *const api.Context) ?LazyPath {
@@ -144,6 +144,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     const run = ctx.runPack("msi");
     run.addArg("--out");
     const out = run.addOutputFileArg("package.msi");
+    ctx.addMtimeArg(run);
     run.addArgs(&.{ "--name", ctx.displayName() });
     run.addArgs(&.{ "--version", b.dupe(naming.msiVersion(&ver_buf, ctx.meta.semver)) });
     run.addArgs(&.{ "--manufacturer", ctx.publisher() });
@@ -161,7 +162,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         run.addFileArg(icon);
     }
     run.addArg("--file");
-    run.addArtifactArg(ctx.binary);
+    run.addFileArg(ctx.binary_file);
     run.addArg(ctx.binary.out_filename);
     for (o.extra_files) |f| {
         run.addArg("--file");
