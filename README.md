@@ -206,10 +206,36 @@ versions distinct in those three fields. See
 ## Try the sample installers
 
 Each [GitHub release](https://github.com/ChristianPresley/zstaller/releases)
-carries the sample application's MSI, EXE and `.deb` installers, built by
-the [release workflow](.github/workflows/release.yml) and installed, run and
-uninstalled on x86_64 and ARM64 Windows and Ubuntu before publishing. The
-release notes explain how to install, run and remove them.
+carries the sample application's MSI, EXE and `.deb` installers. They are
+built on a maintainer's machine, never by GitHub, then installed, run and
+uninstalled on x86_64 and ARM64 Windows and Ubuntu by the
+[release workflow](.github/workflows/release.yml) before it publishes them.
+The release notes explain how to install, run and remove them.
+
+## Making a release
+
+Build every installer locally with [PowerShell 7](https://github.com/PowerShell/PowerShell)
+and Zig 0.16.0, from a clean checkout of the commit to release:
+
+```sh
+pwsh scripts/release.ps1 -OutputDir ~/Desktop/zstaller-installers
+```
+
+The script builds the sample for every target into a fresh
+`zig-out/release/` with `SOURCE_DATE_EPOCH` set to the commit time, checks
+every `.sha256` file and copies the installers and checksums to
+`-OutputDir` (default `zig-out/release/installers`), leaving other files
+there alone. To publish, push the commit and add `-Tag`:
+
+```sh
+pwsh scripts/release.ps1 -Tag v0.2.0
+```
+
+This uploads the files to a draft release for that commit and starts the
+release workflow, which downloads them, checks their checksums, installs,
+runs and uninstalls them on every platform, and publishes the draft only if
+all of that passes. It needs the [GitHub CLI](https://cli.github.com/),
+signed in.
 
 ## Reproducible builds
 
@@ -237,7 +263,7 @@ Windows, and requires all four builds to match.
   upgrade code, version and file paths.
 
 To reproduce a release, check out the commit and use the
-`SOURCE_DATE_EPOCH` its release notes give (the release workflow uses the
+`SOURCE_DATE_EPOCH` its release notes give (`scripts/release.ps1` uses the
 commit time):
 
 ```sh
