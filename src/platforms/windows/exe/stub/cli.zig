@@ -320,25 +320,70 @@ pub fn isInsideDir(path: []const u8, dir: []const u8) bool {
     return path[d.len] == '\\' or path[d.len] == '/' or d[d.len - 1] == '\\' or d[d.len - 1] == '/';
 }
 
-/// A program running from the install directory.
+/// A program that keeps installed files in use: one running from the
+/// install directory, or one Windows reports as having its files open.
 pub const RunningProcess = struct {
     pid: u32,
     /// File name of the program, e.g. `app.exe`.
     name: []const u8,
+    /// Full path of the program's executable, when it could be read.
+    path: []const u8 = "",
+    /// The account it runs as, e.g. `CONTOSO\alice` or
+    /// `NT AUTHORITY\SYSTEM`, when it could be read.
+    user: []const u8 = "",
+    /// Short name of the Windows service it hosts, if it is one.
+    service: ?[]const u8 = null,
+
+    /// The program's name, with the service it runs: `app.exe` or
+    /// `svchost.exe (service AppSvc)`.
+    pub fn label(p: RunningProcess, buf: []u8) []const u8 {
+        const service = p.service orelse return p.name;
+        return std.fmt.bufPrint(buf, "{s} (service {s})", .{ p.name, service }) catch p.name;
+    }
+
+    /// Whether `p` and `q` are the same program; a process hosting
+    /// several services appears once per service.
+    pub fn same(p: RunningProcess, q: RunningProcess) bool {
+        if (p.pid != q.pid) return false;
+        const a = p.service orelse return q.service == null;
+        const b = q.service orelse return false;
+        return std.ascii.eqlIgnoreCase(a, b);
+    }
 };
+
+/// Adds `p` to `list` unless it is already there. A service entry
+/// replaces a plain entry for the same process, since it says more.
+pub fn addProcess(gpa: Allocator, list: *std.ArrayList(RunningProcess), p: RunningProcess) Allocator.Error!void {
+    for (list.items) |*q| {
+        if (q.same(p)) return;
+        if (q.pid == p.pid and q.service == null and p.service != null) {
+            q.* = p;
+            return;
+        }
+        if (q.pid == p.pid and p.service == null) return;
+    }
+    try list.append(gpa, p);
+}
 
 /// File name of `image_path`, a full Windows path.
 pub fn processName(image_path: []const u8) []const u8 {
     return basenameWindows(image_path);
 }
 
-/// One line per process: `  app.exe (process ID 1234)`.
+/// One or two lines per process:
+///
+///     app.exe (process ID 1234, user CONTOSO\alice)
+///       C:\Program Files\App\app.exe
 pub fn processList(gpa: Allocator, procs: []const RunningProcess) Allocator.Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (procs, 0..) |p, i| {
         if (i > 0) try out.append(gpa, '\n');
-        try out.print(gpa, "  {s} (process ID {d})", .{ p.name, p.pid });
+        var buf: [256]u8 = undefined;
+        try out.print(gpa, "  {s} (process ID {d}", .{ p.label(&buf), p.pid });
+        if (p.user.len > 0) try out.print(gpa, ", user {s}", .{p.user});
+        try out.append(gpa, ')');
+        if (p.path.len > 0) try out.print(gpa, "\n    {s}", .{p.path});
     }
     return out.toOwnedSlice(gpa);
 }
@@ -358,11 +403,36 @@ test "processList" {
     const gpa = testing.allocator;
     try testing.expectEqualStrings("app.exe", processName("C:\\Program Files\\App\\app.exe"));
     const text = try processList(gpa, &.{
-        .{ .pid = 1234, .name = "app.exe" },
+        .{ .pid = 1234, .name = "app.exe", .path = "C:\\Program Files\\App\\app.exe", .user = "CONTOSO\\alice" },
         .{ .pid = 99, .name = "helper.exe" },
+        .{ .pid = 7, .name = "svchost.exe", .user = "NT AUTHORITY\\SYSTEM", .service = "AppSvc" },
     });
     defer gpa.free(text);
-    try testing.expectEqualStrings("  app.exe (process ID 1234)\n  helper.exe (process ID 99)", text);
+    try testing.expectEqualStrings(
+        "  app.exe (process ID 1234, user CONTOSO\\alice)\n    C:\\Program Files\\App\\app.exe\n" ++
+            "  helper.exe (process ID 99)\n" ++
+            "  svchost.exe (service AppSvc) (process ID 7, user NT AUTHORITY\\SYSTEM)",
+        text,
+    );
+}
+
+test "addProcess merges duplicates" {
+    const gpa = testing.allocator;
+    var list: std.ArrayList(RunningProcess) = .empty;
+    defer list.deinit(gpa);
+    try addProcess(gpa, &list, .{ .pid = 1, .name = "app.exe" });
+    try addProcess(gpa, &list, .{ .pid = 1, .name = "app.exe" });
+    try addProcess(gpa, &list, .{ .pid = 2, .name = "svchost.exe" });
+    try addProcess(gpa, &list, .{ .pid = 2, .name = "svchost.exe", .service = "A" });
+    try addProcess(gpa, &list, .{ .pid = 2, .name = "svchost.exe", .service = "b" });
+    try addProcess(gpa, &list, .{ .pid = 2, .name = "svchost.exe", .service = "B" });
+    try addProcess(gpa, &list, .{ .pid = 2, .name = "svchost.exe" });
+    try testing.expectEqual(@as(usize, 3), list.items.len);
+    try testing.expectEqualStrings("A", list.items[1].service.?);
+    try testing.expectEqualStrings("b", list.items[2].service.?);
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("svchost.exe (service A)", list.items[1].label(&buf));
+    try testing.expectEqualStrings("app.exe", list.items[0].label(&buf));
 }
 
 test "parse options" {

@@ -630,3 +630,170 @@ pub const IShellItem = extern struct {
 
 pub extern "shell32" fn SHCreateItemFromParsingName(pszPath: [*:0]const WCHAR, pbc: ?*anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(.winapi) HRESULT;
 pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
+
+// ---- List view (commctrl.h)
+
+pub const ICC_LISTVIEW_CLASSES: DWORD = 0x1;
+pub const LVS_REPORT: DWORD = 0x1;
+pub const LVS_SINGLESEL: DWORD = 0x4;
+pub const LVS_SHOWSELALWAYS: DWORD = 0x8;
+pub const LVS_NOSORTHEADER: DWORD = 0x8000;
+pub const LVS_EX_FULLROWSELECT: usize = 0x20;
+pub const LVS_EX_LABELTIP: usize = 0x4000;
+pub const LVS_EX_DOUBLEBUFFER: usize = 0x10000;
+pub const LVM_DELETEALLITEMS: u32 = 0x1000 + 9;
+pub const LVM_SETCOLUMNWIDTH: u32 = 0x1000 + 30;
+pub const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = 0x1000 + 54;
+pub const LVM_INSERTITEMW: u32 = 0x1000 + 77;
+pub const LVM_INSERTCOLUMNW: u32 = 0x1000 + 97;
+pub const LVM_SETITEMTEXTW: u32 = 0x1000 + 116;
+pub const LVCF_FMT: u32 = 0x1;
+pub const LVCF_WIDTH: u32 = 0x2;
+pub const LVCF_TEXT: u32 = 0x4;
+pub const LVCF_SUBITEM: u32 = 0x8;
+pub const LVCFMT_LEFT: c_int = 0;
+pub const LVCFMT_RIGHT: c_int = 1;
+pub const LVIF_TEXT: u32 = 0x1;
+
+pub const LVCOLUMNW = extern struct {
+    mask: u32 = 0,
+    fmt: c_int = 0,
+    cx: c_int = 0,
+    pszText: ?[*:0]const WCHAR = null,
+    cchTextMax: c_int = 0,
+    iSubItem: c_int = 0,
+    iImage: c_int = 0,
+    iOrder: c_int = 0,
+    cxMin: c_int = 0,
+    cxDefault: c_int = 0,
+    cxIdeal: c_int = 0,
+};
+
+pub const LVITEMW = extern struct {
+    mask: u32 = 0,
+    iItem: c_int = 0,
+    iSubItem: c_int = 0,
+    state: u32 = 0,
+    stateMask: u32 = 0,
+    pszText: ?[*:0]const WCHAR = null,
+    cchTextMax: c_int = 0,
+    iImage: c_int = 0,
+    lParam: LPARAM = 0,
+    iIndent: c_int = 0,
+    iGroupId: c_int = 0,
+    cColumns: u32 = 0,
+    puColumns: ?*u32 = null,
+    piColFmt: ?*c_int = null,
+    iGroup: c_int = 0,
+};
+
+// ---- Restart Manager (restartmanager.h): which processes and services
+// have files open.
+
+pub const CCH_RM_SESSION_KEY = 32;
+
+pub const RM_UNIQUE_PROCESS = extern struct {
+    dwProcessId: DWORD,
+    ProcessStartTime: [2]DWORD,
+};
+
+pub const RM_APP_TYPE = enum(c_int) {
+    unknown = 0,
+    main_window = 1,
+    other_window = 2,
+    service = 3,
+    explorer = 4,
+    console = 5,
+    critical = 1000,
+    _,
+};
+
+pub const RM_PROCESS_INFO = extern struct {
+    Process: RM_UNIQUE_PROCESS,
+    strAppName: [256]WCHAR,
+    strServiceShortName: [64]WCHAR,
+    ApplicationType: RM_APP_TYPE,
+    AppStatus: u32,
+    TSSessionId: DWORD,
+    bRestartable: c_int,
+};
+
+pub extern "rstrtmgr" fn RmStartSession(pSessionHandle: *DWORD, dwSessionFlags: DWORD, strSessionKey: [*]WCHAR) callconv(.winapi) DWORD;
+pub extern "rstrtmgr" fn RmEndSession(dwSessionHandle: DWORD) callconv(.winapi) DWORD;
+pub extern "rstrtmgr" fn RmRegisterResources(
+    dwSessionHandle: DWORD,
+    nFiles: u32,
+    rgsFileNames: ?[*]const [*:0]const WCHAR,
+    nApplications: u32,
+    rgApplications: ?[*]const RM_UNIQUE_PROCESS,
+    nServices: u32,
+    rgsServiceNames: ?[*]const [*:0]const WCHAR,
+) callconv(.winapi) DWORD;
+pub extern "rstrtmgr" fn RmGetList(
+    dwSessionHandle: DWORD,
+    pnProcInfoNeeded: *u32,
+    pnProcInfo: *u32,
+    rgAffectedApps: ?[*]RM_PROCESS_INFO,
+    lpdwRebootReasons: *DWORD,
+) callconv(.winapi) DWORD;
+
+// ---- Process owners and services
+
+pub const TOKEN_QUERY: DWORD = 0x8;
+pub const TokenUser: c_int = 1;
+pub const SID_AND_ATTRIBUTES = extern struct { Sid: ?*anyopaque, Attributes: DWORD };
+
+pub extern "advapi32" fn OpenProcessToken(ProcessHandle: HANDLE, DesiredAccess: DWORD, TokenHandle: *?HANDLE) callconv(.winapi) c_int;
+pub extern "advapi32" fn GetTokenInformation(TokenHandle: HANDLE, TokenInformationClass: c_int, TokenInformation: ?*anyopaque, TokenInformationLength: DWORD, ReturnLength: *DWORD) callconv(.winapi) c_int;
+pub extern "advapi32" fn LookupAccountSidW(
+    lpSystemName: ?[*:0]const WCHAR,
+    Sid: *anyopaque,
+    Name: [*]WCHAR,
+    cchName: *DWORD,
+    ReferencedDomainName: [*]WCHAR,
+    cchReferencedDomainName: *DWORD,
+    peUse: *c_int,
+) callconv(.winapi) c_int;
+
+pub const SC_HANDLE = *opaque {};
+pub const SC_MANAGER_CONNECT: DWORD = 0x1;
+pub const SERVICE_QUERY_CONFIG: DWORD = 0x1;
+pub const SERVICE_QUERY_STATUS: DWORD = 0x4;
+pub const SERVICE_STOP: DWORD = 0x20;
+pub const SERVICE_CONTROL_STOP: DWORD = 0x1;
+pub const SERVICE_STOPPED: DWORD = 0x1;
+pub const ERROR_SERVICE_NOT_ACTIVE: DWORD = 1062;
+
+pub const SERVICE_STATUS = extern struct {
+    dwServiceType: DWORD = 0,
+    dwCurrentState: DWORD = 0,
+    dwControlsAccepted: DWORD = 0,
+    dwWin32ExitCode: DWORD = 0,
+    dwServiceSpecificExitCode: DWORD = 0,
+    dwCheckPoint: DWORD = 0,
+    dwWaitHint: DWORD = 0,
+};
+
+pub const QUERY_SERVICE_CONFIGW = extern struct {
+    dwServiceType: DWORD,
+    dwStartType: DWORD,
+    dwErrorControl: DWORD,
+    lpBinaryPathName: ?[*:0]WCHAR,
+    lpLoadOrderGroup: ?[*:0]WCHAR,
+    dwTagId: DWORD,
+    lpDependencies: ?[*:0]WCHAR,
+    lpServiceStartName: ?[*:0]WCHAR,
+    lpDisplayName: ?[*:0]WCHAR,
+};
+
+pub extern "advapi32" fn OpenSCManagerW(lpMachineName: ?[*:0]const WCHAR, lpDatabaseName: ?[*:0]const WCHAR, dwDesiredAccess: DWORD) callconv(.winapi) ?SC_HANDLE;
+pub extern "advapi32" fn OpenServiceW(hSCManager: SC_HANDLE, lpServiceName: [*:0]const WCHAR, dwDesiredAccess: DWORD) callconv(.winapi) ?SC_HANDLE;
+pub extern "advapi32" fn CloseServiceHandle(hSCObject: SC_HANDLE) callconv(.winapi) c_int;
+pub extern "advapi32" fn QueryServiceConfigW(hService: SC_HANDLE, lpServiceConfig: ?*anyopaque, cbBufSize: DWORD, pcbBytesNeeded: *DWORD) callconv(.winapi) c_int;
+pub extern "advapi32" fn ControlService(hService: SC_HANDLE, dwControl: DWORD, lpServiceStatus: *SERVICE_STATUS) callconv(.winapi) c_int;
+pub extern "advapi32" fn QueryServiceStatus(hService: SC_HANDLE, lpServiceStatus: *SERVICE_STATUS) callconv(.winapi) c_int;
+pub extern "kernel32" fn GetLastError() callconv(.winapi) DWORD;
+
+pub const IDC_WAIT: usize = 32514;
+pub extern "user32" fn SetCursor(hCursor: ?HCURSOR) callconv(.winapi) ?HCURSOR;
+pub extern "user32" fn MessageBeep(uType: u32) callconv(.winapi) c_int;

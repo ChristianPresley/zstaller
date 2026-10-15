@@ -19,7 +19,9 @@
 //!
 //! Install: Welcome, License (when the project supplies one), Install
 //! location, Options (when there is a choice to make), Installing,
-//! Finished. Uninstall: Confirm, Removing, Finished.
+//! Finished. Uninstall: Confirm, Removing, Finished. Before installing or
+//! removing files, a "Programs in use" page lists any programs that keep
+//! them in use, until they are closed.
 //!
 //! Layout is in pixels at 100% scaling, the size of the Windows Installer
 //! dialogs (493x360, with 493x312 artwork above a 48-pixel button bar),
@@ -72,6 +74,9 @@ const Page = enum {
     uninstall_confirm,
     uninstalling,
     uninstall_finish,
+    /// Programs keep the installation in use; shown before Installing or
+    /// Uninstalling until they are closed.
+    in_use,
 
     fn usesWelcomeArt(p: Page) bool {
         return p == .welcome or p == .finish or p == .uninstall_finish;
@@ -94,6 +99,16 @@ const Id = struct {
     const launch: u16 = 15;
     const license: u16 = 16;
     const progress: u16 = 17;
+    const in_use: u16 = 18;
+};
+
+/// Columns of the "Programs in use" list: title, width at 100% scaling,
+/// and alignment.
+const in_use_columns = [_]struct { []const u8, i32, c_int }{
+    .{ "Full path", 152, w32.LVCFMT_LEFT },
+    .{ "Process name", 92, w32.LVCFMT_LEFT },
+    .{ "PID", 42, w32.LVCFMT_RIGHT },
+    .{ "User or service account", 140, w32.LVCFMT_LEFT },
 };
 
 var current: ?*Wizard = null;
@@ -137,6 +152,10 @@ const Wizard = struct {
     /// The installation being removed (uninstall only).
     uninstall_dir: []const u8 = "",
     installed_version: ?[]const u8 = null,
+    /// The programs listed on the "Programs in use" page, and what the
+    /// wizard was about to do when it found them.
+    in_use: []const cli.RunningProcess = &.{},
+    in_use_op: main.Operation = .install,
 
     hinst: ?w32.HINSTANCE = null,
     hwnd: w32.HWND = undefined,
@@ -172,6 +191,7 @@ const Wizard = struct {
     launch: w32.HWND = undefined,
     license: w32.HWND = undefined,
     progress: w32.HWND = undefined,
+    in_use_list: w32.HWND = undefined,
 
     status: [512]u8 = undefined,
     status_len: usize = 0,
@@ -179,7 +199,7 @@ const Wizard = struct {
     // ---- Window lifetime
 
     fn create(wz: *Wizard) bool {
-        const icc: w32.INITCOMMONCONTROLSEX = .{ .dwICC = w32.ICC_STANDARD_CLASSES | w32.ICC_PROGRESS_CLASS };
+        const icc: w32.INITCOMMONCONTROLSEX = .{ .dwICC = w32.ICC_STANDARD_CLASSES | w32.ICC_PROGRESS_CLASS | w32.ICC_LISTVIEW_CLASSES };
         _ = w32.InitCommonControlsEx(&icc);
         _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
 
@@ -272,6 +292,7 @@ const Wizard = struct {
         const button = std.unicode.utf8ToUtf16LeStringLiteral("BUTTON");
         const edit = std.unicode.utf8ToUtf16LeStringLiteral("EDIT");
         const progress = std.unicode.utf8ToUtf16LeStringLiteral("msctls_progress32");
+        const list_view = std.unicode.utf8ToUtf16LeStringLiteral("SysListView32");
         const tab = w32.WS_CHILD | w32.WS_TABSTOP;
 
         // Creation order is the Tab order.
@@ -283,11 +304,24 @@ const Wizard = struct {
         wz.desktop = wz.child(button, "Create a &desktop shortcut", tab | w32.BS_AUTOCHECKBOX, 0, Id.desktop);
         wz.launch = wz.child(button, "&Launch " ++ config.display_name, tab | w32.BS_AUTOCHECKBOX, 0, Id.launch);
         wz.progress = wz.child(progress, "", w32.WS_CHILD | w32.PBS_SMOOTH, 0, Id.progress);
+        wz.in_use_list = wz.child(list_view, "", tab | w32.LVS_REPORT | w32.LVS_SINGLESEL | w32.LVS_SHOWSELALWAYS | w32.LVS_NOSORTHEADER, w32.WS_EX_CLIENTEDGE, Id.in_use);
         wz.back = wz.child(button, "< &Back", tab, 0, Id.back);
         wz.next = wz.child(button, "&Next >", tab | w32.BS_DEFPUSHBUTTON, 0, Id.next);
         wz.cancel = wz.child(button, "Cancel", tab, 0, Id.cancel);
 
         _ = w32.SendMessageW(wz.progress, w32.PBM_SETRANGE32, 0, 1000);
+        const list_style = w32.LVS_EX_FULLROWSELECT | w32.LVS_EX_LABELTIP | w32.LVS_EX_DOUBLEBUFFER;
+        _ = w32.SendMessageW(wz.in_use_list, w32.LVM_SETEXTENDEDLISTVIEWSTYLE, list_style, @bitCast(list_style));
+        for (in_use_columns, 0..) |col, i| {
+            const title, _, const fmt = col;
+            const column: w32.LVCOLUMNW = .{
+                .mask = w32.LVCF_FMT | w32.LVCF_WIDTH | w32.LVCF_TEXT | w32.LVCF_SUBITEM,
+                .fmt = fmt,
+                .pszText = wide(wz.s.gpa, title).ptr,
+                .iSubItem = @intCast(i),
+            };
+            _ = w32.SendMessageW(wz.in_use_list, w32.LVM_INSERTCOLUMNW, i, @bitCast(@intFromPtr(&column)));
+        }
         if (wz.assets.license) |license_text| {
             _ = w32.SendMessageW(wz.license, w32.EM_SETLIMITTEXT, 0, 0);
             const crlf = cli.crlf(wz.s.gpa, license_text) catch license_text;
@@ -336,8 +370,12 @@ const Wizard = struct {
         if (wz.icon_window) |i| _ = w32.SendMessageW(wz.hwnd, w32.WM_SETICON, w32.ICON_BIG, @bitCast(@intFromPtr(i)));
         if (wz.icon_window_small) |i| _ = w32.SendMessageW(wz.hwnd, w32.WM_SETICON, w32.ICON_SMALL, @bitCast(@intFromPtr(i)));
 
-        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.back, wz.next, wz.cancel }) |h| {
+        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.in_use_list, wz.back, wz.next, wz.cancel }) |h| {
             if (wz.font_body) |f| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
+        }
+        for (in_use_columns, 0..) |col, i| {
+            _, const col_width, _ = col;
+            _ = w32.SendMessageW(wz.in_use_list, w32.LVM_SETCOLUMNWIDTH, i, wz.px(col_width));
         }
         // Room between the edit box's border and its text.
         const edit_margin: usize = @intCast(wz.px(4));
@@ -413,7 +451,7 @@ const Wizard = struct {
         wz.page = page;
 
         // Every control is hidden unless the page places it.
-        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.progress }) |h| {
+        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.progress, wz.in_use_list }) |h| {
             _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
         switch (page) {
@@ -444,6 +482,7 @@ const Wizard = struct {
             .finish => if (wz.outcome == .success and config.launch_on_finish) {
                 wz.place(wz.launch, welcome_text_x, art_height - 44, width - welcome_text_x - 20, 22);
             },
+            .in_use => wz.place(wz.in_use_list, margin, in_use_list_y, width - 2 * margin, art_height - in_use_list_y - 14),
             else => {},
         }
 
@@ -460,6 +499,15 @@ const Wizard = struct {
         show(wz.back, !final and page != .uninstall_confirm and !busy);
         show(wz.cancel, !final);
         _ = w32.EnableWindow(wz.back, @intFromBool(wz.preceding(page) != null));
+        wz.setText(wz.back, "< &Back");
+        if (page == .in_use) {
+            // Back becomes "Close programs", when the project allows it.
+            const close_width = 110;
+            wz.place(wz.back, next_x - 10 - close_width, button_y, close_width, button_height);
+            wz.setText(wz.back, "&Close programs");
+            show(wz.back, config.close_running_apps);
+            _ = w32.EnableWindow(wz.back, 1);
+        }
         _ = w32.EnableWindow(wz.cancel, @intFromBool(!busy));
         _ = w32.EnableWindow(wz.next, @intFromBool(!busy and (page != .license or checked(wz.accept))));
         wz.setText(wz.next, switch (page) {
@@ -468,6 +516,7 @@ const Wizard = struct {
             .finish => if (wz.outcome == .success) "&Finish" else "&Close",
             .uninstall_confirm => "&Uninstall",
             .uninstall_finish => "&Close",
+            .in_use => "&Retry",
         });
         if (final) {
             // The only button left moves to the far right.
@@ -479,6 +528,7 @@ const Wizard = struct {
     }
 
     const location_edit_y = banner_height + 64;
+    const in_use_list_y = banner_height + 60;
 
     fn place(wz: *const Wizard, h: w32.HWND, x: i32, y: i32, w: i32, hgt: i32) void {
         _ = w32.SetWindowPos(h, null, wz.px(x), wz.px(y), wz.px(x + w) - wz.px(x), wz.px(y + hgt) - wz.px(y), w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
@@ -495,7 +545,9 @@ const Wizard = struct {
         switch (id) {
             Id.next => if (w32.IsWindowEnabled(wz.next) != 0 and code == w32.BN_CLICKED) wz.onNext(),
             Id.back => if (w32.IsWindowEnabled(wz.back) != 0) {
-                if (wz.preceding(wz.page)) |p| wz.showPage(p);
+                if (wz.page == .in_use) {
+                    wz.onClosePrograms();
+                } else if (wz.preceding(wz.page)) |p| wz.showPage(p);
             },
             Id.cancel => wz.onCancel(),
             Id.browse => wz.onBrowse(),
@@ -534,6 +586,7 @@ const Wizard = struct {
             },
             .uninstall_confirm => wz.uninstall(),
             .uninstall_finish => wz.close(wz.outcome),
+            .in_use => wz.retry(),
             .installing, .uninstalling => {},
         }
     }
@@ -548,7 +601,8 @@ const Wizard = struct {
             .installing, .uninstalling => {},
             .finish, .uninstall_finish => wz.close(wz.outcome),
             else => {
-                const question = if (wz.page == .uninstall_confirm)
+                const removing = wz.page == .uninstall_confirm or (wz.page == .in_use and wz.in_use_op == .uninstall);
+                const question = if (removing)
                     "Cancel the removal of " ++ config.display_name ++ "?"
                 else
                     "Setup is not complete. If you exit now, " ++ config.display_name ++ " will not be installed.\n\nExit Setup?";
@@ -610,13 +664,9 @@ const Wizard = struct {
                 .optional => checked(wz.desktop),
             },
         };
-        // Programs still running from an earlier install keep their files
+        // Programs still running from an earlier install keep its files
         // locked; the user is asked to close them first.
-        const stop = main.ensureNotRunning(wz.s, dir, .install) catch |err| {
-            _ = wz.s.fail("Setup could not check for running programs: {t}", .{err});
-            return;
-        };
-        if (stop != null) return;
+        if (!wz.clearOfPrograms(dir, .install)) return;
 
         wz.showPage(.installing);
         main.applyInstall(wz.s, plan, wz.self_path, wz.progressCallback()) catch |err| {
@@ -627,11 +677,7 @@ const Wizard = struct {
     }
 
     fn uninstall(wz: *Wizard) void {
-        const stop = main.ensureNotRunning(wz.s, wz.uninstall_dir, .uninstall) catch |err| {
-            _ = wz.s.fail("The uninstaller could not check for running programs: {t}", .{err});
-            return;
-        };
-        if (stop != null) return;
+        if (!wz.clearOfPrograms(wz.uninstall_dir, .uninstall)) return;
 
         wz.showPage(.uninstalling);
         main.applyUninstall(wz.s, wz.uninstall_dir, wz.self_path, wz.progressCallback()) catch |err| {
@@ -639,6 +685,79 @@ const Wizard = struct {
         };
         wz.outcome = if (wz.failure == null) .success else .failure;
         wz.showPage(.uninstall_finish);
+    }
+
+    /// Whether no program keeps the installation in `dir` in use. If
+    /// some do, they are listed on the "Programs in use" page and `op`
+    /// waits until they are closed.
+    fn clearOfPrograms(wz: *Wizard, dir: []const u8, op: main.Operation) bool {
+        const found = main.findInUse(wz.s, dir) catch &.{};
+        if (found.len == 0) return true;
+        wz.in_use = found;
+        wz.in_use_op = op;
+        wz.fillInUseList();
+        if (wz.page == .in_use) {
+            _ = w32.MessageBeep(w32.MB_ICONWARNING);
+            _ = w32.InvalidateRect(wz.hwnd, null, 0);
+        } else {
+            wz.showPage(.in_use);
+        }
+        return false;
+    }
+
+    fn fillInUseList(wz: *Wizard) void {
+        const list = wz.in_use_list;
+        _ = w32.SendMessageW(list, w32.LVM_DELETEALLITEMS, 0, 0);
+        for (wz.in_use, 0..) |p, i| {
+            var label_buf: [256]u8 = undefined;
+            var pid_buf: [16]u8 = undefined;
+            const cells = [_][]const u8{
+                if (p.path.len > 0) p.path else "Not available",
+                p.label(&label_buf),
+                std.fmt.bufPrint(&pid_buf, "{d}", .{p.pid}) catch "",
+                if (p.user.len > 0) p.user else "Not available",
+            };
+            for (cells, 0..) |cell, col| {
+                const item: w32.LVITEMW = .{
+                    .mask = w32.LVIF_TEXT,
+                    .iItem = @intCast(i),
+                    .iSubItem = @intCast(col),
+                    .pszText = wide(wz.s.gpa, cell).ptr,
+                };
+                const msg = if (col == 0) w32.LVM_INSERTITEMW else w32.LVM_SETITEMTEXTW;
+                _ = w32.SendMessageW(list, msg, i, @bitCast(@intFromPtr(&item)));
+            }
+        }
+    }
+
+    /// Retry on the "Programs in use" page: carries on if they are
+    /// closed, else refreshes the list.
+    fn retry(wz: *Wizard) void {
+        switch (wz.in_use_op) {
+            .install => wz.install(),
+            .uninstall => wz.uninstall(),
+        }
+    }
+
+    fn onClosePrograms(wz: *Wizard) void {
+        const question = if (wz.in_use.len == 1)
+            "Close the program listed? Unsaved work in it will be lost."
+        else
+            std.fmt.allocPrint(wz.s.gpa, "Close the {d} programs listed? Unsaved work in them will be lost.", .{wz.in_use.len}) catch return;
+        if (main.messageBox(wz.s.gpa, wz.hwnd, question, w32.MB_YESNO | w32.MB_ICONWARNING | w32.MB_DEFBUTTON2) != w32.IDYES) return;
+        const cursor = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_WAIT));
+        const stuck = main.closePrograms(wz.in_use);
+        _ = w32.SetCursor(cursor);
+        if (stuck) |p| {
+            var buf: [256]u8 = undefined;
+            const msg = std.fmt.allocPrint(
+                wz.s.gpa,
+                "{s} (process ID {d}) could not be closed.\n\nClose it yourself, then click Retry.",
+                .{ p.label(&buf), p.pid },
+            ) catch "A program could not be closed.";
+            _ = main.messageBox(wz.s.gpa, wz.hwnd, msg, w32.MB_OK | w32.MB_ICONWARNING);
+        }
+        wz.retry();
     }
 
     fn progressCallback(wz: *Wizard) main.Progress {
@@ -722,6 +841,15 @@ const Wizard = struct {
                 const dir = wz.getText(wz.dir_edit);
                 const where = std.fmt.allocPrint(wz.s.gpa, "Install location:\n{s}", .{dir}) catch "";
                 wz.drawText(hdc, wz.font_body, color_muted, wz.rect(margin, art_height - 58, width - 2 * margin, 44), where, w32.DT_WORDBREAK | w32.DT_PATH_ELLIPSIS);
+            },
+            .in_use => {
+                const what = if (wz.in_use_op == .install) "Setup needs to replace" else "the uninstaller needs to remove";
+                const how = if (config.close_running_apps)
+                    "Close them and click Retry, or click Close programs to close them now."
+                else
+                    "Close them, then click Retry.";
+                const body = std.fmt.allocPrint(wz.s.gpa, "These programs are using files that {s}. {s}", .{ what, how }) catch "";
+                wz.drawText(hdc, wz.font_body, color_body, wz.rect(margin, banner_height + 16, width - 2 * margin, in_use_list_y - banner_height - 20), body, w32.DT_WORDBREAK);
             },
             .installing, .uninstalling => {
                 wz.drawText(hdc, wz.font_body, color_body, wz.rect(margin, banner_height + 44, width - 2 * margin, 22), wz.status[0..wz.status_len], w32.DT_SINGLELINE | w32.DT_PATH_ELLIPSIS);
@@ -827,6 +955,7 @@ const Wizard = struct {
             .installing => .{ "Installing", "Please wait while Setup installs " ++ config.display_name ++ "." },
             .uninstall_confirm => .{ "Uninstall " ++ config.display_name, "Remove " ++ config.display_name ++ " from your computer." },
             .uninstalling => .{ "Uninstalling", "Please wait while " ++ config.display_name ++ " is removed." },
+            .in_use => .{ "Programs in Use", "Some programs are using " ++ config.display_name ++ "'s files." },
             else => .{ "", "" },
         };
         wz.drawText(hdc, wz.font_title, color_text, wz.rect(20, 10, 340, 22), title, w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS);

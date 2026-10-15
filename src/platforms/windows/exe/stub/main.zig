@@ -305,8 +305,7 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
         Progress.step(progress, i, paths.len, p);
         install_dir.deleteFile(s.io, p) catch |err| switch (err) {
             error.FileNotFound => {},
-            // A program that `ensureNotRunning` cannot see, such as an
-            // editor, has the file open.
+            // A program that `findInUse` cannot see has the file open.
             error.AccessDenied, error.FileBusy => return s.report(
                 "{s}\\{s} is in use by another program, so it cannot be removed.\n\n" ++
                     "Close the program that is using it, then run the uninstaller again.",
@@ -351,14 +350,14 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
 
 pub const Operation = enum { install, uninstall };
 
-/// Windows cannot replace or delete the files of a running program, so
-/// install and uninstall check first, before they change anything, for
-/// programs running from `dir`. Returns null when none are left running,
-/// else the exit code to stop with. With `config.close_running_apps` the
-/// user is asked to force-quit them (silent runs do so without asking);
-/// without it, the user is told to close them.
+/// Windows cannot replace or delete files that are in use, so install and
+/// uninstall check first, before they change anything, for programs
+/// using the installation in `dir`. Returns null when none are left,
+/// else the exit code to stop with. With `config.close_running_apps`
+/// they are closed (silent runs do so without asking); without it, the
+/// user is told to close them. The wizard shows its own page instead.
 pub fn ensureNotRunning(s: *const State, dir: []const u8, op: Operation) !?ExitCode {
-    const running = try findRunning(s, dir);
+    const running = try findInUse(s, dir);
     if (running.len == 0) return null;
     const list = try cli.processList(s.gpa, running);
     const action, const tool = switch (op) {
@@ -368,48 +367,126 @@ pub fn ensureNotRunning(s: *const State, dir: []const u8, op: Operation) !?ExitC
 
     if (!config.close_running_apps) {
         return s.fail(
-            config.display_name ++ " cannot be {s} while it is running, because Windows cannot remove files that are in use.\n\n" ++
-                "Still running:\n{s}\n\nClose {s}, then run the {s} again.",
+            config.display_name ++ " cannot be {s} while its files are in use.\n\n" ++
+                "In use by:\n{s}\n\nClose {s}, then run the {s} again.",
             .{ action, list, if (running.len == 1) "it" else "them", tool },
         );
     }
     const question = try std.fmt.allocPrint(
         s.gpa,
-        config.display_name ++ " is still running. It must be closed before it can be {s}:\n\n{s}\n\n" ++
-            "Force-quit {s} now? Unsaved work in {s} will be lost.",
+        "These programs are using " ++ config.display_name ++ "'s files and must be closed before it can be {s}:\n\n{s}\n\n" ++
+            "Close {s} now? Unsaved work in {s} will be lost.",
         .{ action, list, if (running.len == 1) "it" else "them", if (running.len == 1) "it" else "them" },
     );
     if (!s.confirm(question)) return .cancelled;
 
-    for (running) |p| {
-        if (!forceQuit(p.pid)) {
-            return s.fail("Could not close {s} (process ID {d}).\n\nClose it, then run the {s} again.", .{ p.name, p.pid, tool });
-        }
-        if (s.silent) std.debug.print("closed {s} (process ID {d})\n", .{ p.name, p.pid });
+    if (closePrograms(running)) |p| {
+        var buf: [256]u8 = undefined;
+        return s.fail("Could not close {s} (process ID {d}).\n\nClose it, then run the {s} again.", .{ p.label(&buf), p.pid, tool });
     }
+    if (s.silent) for (running) |p| {
+        var buf: [256]u8 = undefined;
+        std.debug.print("closed {s} (process ID {d})\n", .{ p.label(&buf), p.pid });
+    };
     return null;
 }
 
-/// Other processes whose executable is inside `dir`. Processes this
-/// process cannot query (protected system processes) are skipped; none of
-/// them run from an application's install directory.
-fn findRunning(s: *const State, dir: []const u8) ![]const cli.RunningProcess {
-    const snapshot = w32.CreateToolhelp32Snapshot(w32.TH32CS_SNAPPROCESS, 0);
-    if (snapshot == w32.INVALID_HANDLE_VALUE) return &.{};
-    defer _ = w32.CloseHandle(snapshot);
-
+/// The programs keeping the installation in `dir` in use: every other
+/// process whose executable is inside `dir`, and every process or service
+/// Windows (the Restart Manager) reports as having one of its installed
+/// files open. Processes this process cannot query (protected system
+/// processes) are skipped; none of them run from an install directory.
+pub fn findInUse(s: *const State, dir: []const u8) ![]const cli.RunningProcess {
     const self_pid = w32.GetCurrentProcessId();
     var found: std.ArrayList(cli.RunningProcess) = .empty;
-    var entry: w32.PROCESSENTRY32W = .{ .dwSize = @sizeOf(w32.PROCESSENTRY32W) };
-    var more = w32.Process32FirstW(snapshot, &entry) != 0;
-    while (more) : (more = w32.Process32NextW(snapshot, &entry) != 0) {
-        const pid = entry.th32ProcessID;
+
+    const snapshot = w32.CreateToolhelp32Snapshot(w32.TH32CS_SNAPPROCESS, 0);
+    if (snapshot != w32.INVALID_HANDLE_VALUE) {
+        defer _ = w32.CloseHandle(snapshot);
+        var entry: w32.PROCESSENTRY32W = .{ .dwSize = @sizeOf(w32.PROCESSENTRY32W) };
+        var more = w32.Process32FirstW(snapshot, &entry) != 0;
+        while (more) : (more = w32.Process32NextW(snapshot, &entry) != 0) {
+            const pid = entry.th32ProcessID;
+            if (pid == 0 or pid == self_pid) continue;
+            const image = imagePath(s.gpa, pid) orelse continue;
+            if (!cli.isInsideDir(image, dir)) continue;
+            try cli.addProcess(s.gpa, &found, .{
+                .pid = pid,
+                .name = cli.processName(image),
+                .path = image,
+                .user = processUser(s.gpa, pid) orelse "",
+            });
+        }
+    }
+
+    for (try lockingProcesses(s, dir)) |info| {
+        const pid = info.Process.dwProcessId;
         if (pid == 0 or pid == self_pid) continue;
-        const image = imagePath(s.gpa, pid) orelse continue;
-        if (!cli.isInsideDir(image, dir)) continue;
-        try found.append(s.gpa, .{ .pid = pid, .name = cli.processName(image) });
+        const service: ?[]const u8 = if (info.ApplicationType == .service)
+            wideField(s.gpa, &info.strServiceShortName)
+        else
+            null;
+        const image = imagePath(s.gpa, pid);
+        const name = if (image) |i| cli.processName(i) else wideField(s.gpa, &info.strAppName) orelse continue;
+        const user = processUser(s.gpa, pid) orelse
+            (if (service) |svc| serviceAccount(s.gpa, svc) else null) orelse "";
+        try cli.addProcess(s.gpa, &found, .{
+            .pid = pid,
+            .name = name,
+            .path = image orelse "",
+            .user = user,
+            .service = service,
+        });
     }
     return found.items;
+}
+
+/// What the Restart Manager reports as using the files installed in
+/// `dir`. Empty when nothing is installed there or the check fails.
+fn lockingProcesses(s: *const State, dir: []const u8) ![]const w32.RM_PROCESS_INFO {
+    var install_dir = Io.Dir.openDirAbsolute(s.io, dir, .{}) catch return &.{};
+    defer install_dir.close(s.io);
+    const paths = readManifest(s, install_dir) orelse return &.{};
+
+    var files: std.ArrayList([*:0]const u16) = .empty;
+    for (paths) |p| {
+        const full = try std.fs.path.join(s.gpa, &.{ dir, p });
+        std.mem.replaceScalar(u8, full, '/', '\\');
+        try files.append(s.gpa, std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, full) catch continue);
+    }
+    if (files.items.len == 0) return &.{};
+
+    var session: w32.DWORD = 0;
+    var key: [w32.CCH_RM_SESSION_KEY + 1]u16 = @splat(0);
+    if (w32.RmStartSession(&session, 0, &key) != 0) return &.{};
+    defer _ = w32.RmEndSession(session);
+    if (w32.RmRegisterResources(session, @intCast(files.items.len), files.items.ptr, 0, null, 0, null) != 0) return &.{};
+
+    var infos: []w32.RM_PROCESS_INFO = &.{};
+    // The list can grow between the size query and the read; retry a few
+    // times.
+    for (0..4) |_| {
+        var needed: u32 = 0;
+        var count: u32 = @intCast(infos.len);
+        var reasons: w32.DWORD = 0;
+        switch (w32.RmGetList(session, &needed, &count, if (infos.len > 0) infos.ptr else null, &reasons)) {
+            0 => return infos[0..@min(count, infos.len)],
+            @as(w32.DWORD, @intCast(w32.ERROR_MORE_DATA)) => infos = try s.gpa.alloc(w32.RM_PROCESS_INFO, needed + 4),
+            else => return &.{},
+        }
+    }
+    return &.{};
+}
+
+/// Closes each of `procs`: services are stopped through the service
+/// manager, other programs are ended. Returns the first one that is
+/// still running, or null when all are closed.
+pub fn closePrograms(procs: []const cli.RunningProcess) ?cli.RunningProcess {
+    for (procs) |p| {
+        const closed = if (p.service) |svc| stopService(svc) and waitForExit(p.pid) else forceQuit(p.pid);
+        if (!closed) return p;
+    }
+    return null;
 }
 
 fn imagePath(gpa: Allocator, pid: w32.DWORD) ?[]const u8 {
@@ -421,12 +498,89 @@ fn imagePath(gpa: Allocator, pid: w32.DWORD) ?[]const u8 {
     return std.unicode.wtf16LeToWtf8Alloc(gpa, buf[0..len]) catch null;
 }
 
+/// The account process `pid` runs as, as `DOMAIN\name`.
+fn processUser(gpa: Allocator, pid: w32.DWORD) ?[]const u8 {
+    const process = w32.OpenProcess(w32.PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return null;
+    defer _ = w32.CloseHandle(process);
+    var token: ?w32.HANDLE = null;
+    if (w32.OpenProcessToken(process, w32.TOKEN_QUERY, &token) == 0) return null;
+    defer _ = w32.CloseHandle(token.?);
+    var buf: [256]u8 align(@alignOf(w32.SID_AND_ATTRIBUTES)) = undefined;
+    var len: w32.DWORD = 0;
+    if (w32.GetTokenInformation(token.?, w32.TokenUser, &buf, buf.len, &len) == 0) return null;
+    const user: *const w32.SID_AND_ATTRIBUTES = @ptrCast(&buf);
+    var name: [256]u16 = undefined;
+    var name_len: w32.DWORD = name.len;
+    var domain: [256]u16 = undefined;
+    var domain_len: w32.DWORD = domain.len;
+    var use: c_int = 0;
+    if (w32.LookupAccountSidW(null, user.Sid orelse return null, &name, &name_len, &domain, &domain_len, &use) == 0) return null;
+    const n = std.unicode.wtf16LeToWtf8Alloc(gpa, name[0..name_len]) catch return null;
+    if (domain_len == 0) return n;
+    const d = std.unicode.wtf16LeToWtf8Alloc(gpa, domain[0..domain_len]) catch return null;
+    return std.fmt.allocPrint(gpa, "{s}\\{s}", .{ d, n }) catch null;
+}
+
+/// The account service `name` is configured to run as, such as
+/// `LocalSystem` or `NT AUTHORITY\LocalService`.
+fn serviceAccount(gpa: Allocator, name: []const u8) ?[]const u8 {
+    const manager = w32.OpenSCManagerW(null, null, w32.SC_MANAGER_CONNECT) orelse return null;
+    defer _ = w32.CloseServiceHandle(manager);
+    const name_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, name) catch return null;
+    const service = w32.OpenServiceW(manager, name_w.ptr, w32.SERVICE_QUERY_CONFIG) orelse return null;
+    defer _ = w32.CloseServiceHandle(service);
+    var buf: [8192]u8 align(@alignOf(w32.QUERY_SERVICE_CONFIGW)) = undefined;
+    var needed: w32.DWORD = 0;
+    if (w32.QueryServiceConfigW(service, &buf, buf.len, &needed) == 0) return null;
+    const cfg: *const w32.QUERY_SERVICE_CONFIGW = @ptrCast(&buf);
+    const account = cfg.lpServiceStartName orelse return null;
+    return std.unicode.wtf16LeToWtf8Alloc(gpa, std.mem.span(account)) catch null;
+}
+
+/// A NUL-terminated string field of a Win32 struct.
+fn wideField(gpa: Allocator, field: []const u16) ?[]const u8 {
+    const len = std.mem.indexOfScalar(u16, field, 0) orelse field.len;
+    if (len == 0) return null;
+    return std.unicode.wtf16LeToWtf8Alloc(gpa, field[0..len]) catch null;
+}
+
+/// Asks the service manager to stop service `name` and waits up to 30
+/// seconds for it to stop. Returns true if it is stopped.
+fn stopService(name: []const u8) bool {
+    var name_buf: [256]u16 = undefined;
+    const n = std.unicode.wtf8ToWtf16Le(name_buf[0 .. name_buf.len - 1], name) catch return false;
+    name_buf[n] = 0;
+    const manager = w32.OpenSCManagerW(null, null, w32.SC_MANAGER_CONNECT) orelse return false;
+    defer _ = w32.CloseServiceHandle(manager);
+    const service = w32.OpenServiceW(manager, name_buf[0..n :0], w32.SERVICE_STOP | w32.SERVICE_QUERY_STATUS) orelse return false;
+    defer _ = w32.CloseServiceHandle(service);
+    var status: w32.SERVICE_STATUS = .{};
+    if (w32.ControlService(service, w32.SERVICE_CONTROL_STOP, &status) == 0 and
+        w32.GetLastError() != w32.ERROR_SERVICE_NOT_ACTIVE) return false;
+    for (0..300) |_| {
+        if (w32.QueryServiceStatus(service, &status) == 0) return false;
+        if (status.dwCurrentState == w32.SERVICE_STOPPED) return true;
+        w32.Sleep(100);
+    }
+    return false;
+}
+
+/// Gives the process of a stopped service up to 3 seconds to exit. A
+/// process that hosts other services keeps running; the stopped service
+/// has released its files, so that counts as closed too.
+fn waitForExit(pid: w32.DWORD) bool {
+    const process = w32.OpenProcess(w32.SYNCHRONIZE, 0, pid) orelse return true;
+    defer _ = w32.CloseHandle(process);
+    _ = w32.WaitForSingleObject(process, 3_000);
+    return true;
+}
+
 /// Ends process `pid` and waits up to 10 seconds for it to exit, so its
 /// files can be removed. Returns true if it is gone.
 fn forceQuit(pid: w32.DWORD) bool {
     const process = w32.OpenProcess(w32.PROCESS_TERMINATE | w32.SYNCHRONIZE, 0, pid) orelse {
         // Either it has exited since it was found, or this process may
-        // not end it. `findRunning` could query it, so if that still works
+        // not end it. `findInUse` could query it, so if that still works
         // it is running.
         const still = w32.OpenProcess(w32.PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return true;
         _ = w32.CloseHandle(still);
