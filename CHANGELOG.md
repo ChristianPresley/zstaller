@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a progress page and a Finished page that can launch the application.
   `uninstall.exe` uses the same window. It scales with each monitor's DPI
   and uses the application icon. Silent `/S` installs are unchanged.
+- When programs have the installation's files in use, the EXE wizard
+  shows a "Programs in Use" page listing each one's full path, process
+  name, process ID and user or service account, with Retry and, with
+  `close_running_apps`, Close programs. Besides programs running from the
+  install directory, it now finds processes and services that have
+  installed files open, through the Windows Restart Manager; services are
+  stopped through the service manager rather than ended.
 - `windows.wizard` customizes the wizard from `build.zig`: a
   `welcome_image` (493x312) and `banner_image` (493x58), at those sizes
   or double, as PNG or BMP; a `license_file`; `welcome_text` and

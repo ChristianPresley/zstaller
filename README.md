@@ -143,7 +143,7 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `windows.add_to_path` | `.optional` | `.never`, `.optional` or `.always`. |
 | `windows.start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
 | `windows.desktop_shortcut` | `.optional` | All-users desktop shortcut: `.never`, `.optional` (an unticked checkbox) or `.always`. |
-| `windows.close_running_apps` | `false` | Let the EXE installer and uninstaller force-quit programs running from the install directory, after asking. See [Windows EXE](#windows-exe). |
+| `windows.close_running_apps` | `false` | Let the EXE installer and uninstaller close programs and services that have the installation's files in use, after asking. See [Windows EXE](#windows-exe). |
 | `windows.wizard` | built-in look | Images, license and text of the EXE setup wizard. See [Customizing the setup wizard](#customizing-the-setup-wizard). |
 | `deb.maintainer` | `windows.publisher` | Debian `Maintainer` field. |
 | `deb.section`, `deb.priority` | `utils`, `optional` | Debian control fields. |
@@ -211,12 +211,17 @@ wizard's initial choices. Silent installs never show a window.
 installer wrote, then deletes itself and the install directory once it has
 exited. The setup program also uninstalls with `/uninstall`.
 
-Windows cannot replace or delete the files of a running program. Before
-the installer or uninstaller changes anything, it looks for programs
-running from the install directory. By default it stops and lists them,
-with their process IDs, so the user can close them and try again. With
-`.windows.close_running_apps = true` it shows the same list and offers to
-force-quit them; a silent (`/S`) run force-quits them without asking.
+Windows cannot replace or delete files that are in use. Before the
+installer or uninstaller changes anything, it looks for programs running
+from the install directory and asks Windows (the Restart Manager) which
+programs and services have the installed files open. The wizard then shows
+a "Programs in Use" page listing each one's full path, process name,
+process ID, and the user or service account it runs as; the user closes
+them and clicks Retry. With `.windows.close_running_apps = true` the page
+also has a Close programs button, which stops services through the service
+manager and force-quits other programs after asking. A silent (`/S`) run
+prints the same list to standard error and fails, or with
+`close_running_apps` closes them without asking.
 
 Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments.
 
