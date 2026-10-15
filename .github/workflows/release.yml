@@ -1,0 +1,100 @@
+name: Release
+
+# Builds the sample's installers, installs and uninstalls the exact files on
+# every supported platform, then publishes them as a GitHub release.
+#
+# Run it from the Actions tab ("Run workflow") with a tag such as v0.1.0, or
+# push a tag matching v*.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build installers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build installers
+        working-directory: examples/sample
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          zig build installer --summary all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-installers
+          path: examples/sample/zig-out/installers/
+          if-no-files-found: error
+
+  verify-linux:
+    name: Verify (${{ matrix.os }})
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-installers
+          path: installers
+      - name: Install, run and remove the .deb
+        run: examples/sample/scripts/test-linux.sh "$PWD/installers"
+
+  verify-windows:
+    name: Verify (${{ matrix.os }})
+    needs: build
+    strategy:
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-installers
+          path: installers
+      - name: Install, run and uninstall the MSI and EXE
+        shell: pwsh
+        run: examples/sample/scripts/test-windows.ps1 -InstallerDir "$PWD/installers"
+
+  publish:
+    name: Publish release
+    needs: [verify-linux, verify-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-installers
+          path: installers
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" installers/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "zstaller ${TAG#v}" \
+            --notes-file .github/release-notes.md

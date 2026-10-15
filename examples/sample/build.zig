@@ -54,14 +54,20 @@ pub fn build(b: *std.Build) void {
 
 /// zstaller calls this once per target to cross-compile the application.
 fn createExe(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
-    return b.addExecutable(.{
-        .name = "sample",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            // Smaller installers: drop debug info from release binaries.
-            .strip = optimize != .Debug,
-        }),
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        // Smaller installers: drop debug info from release binaries.
+        .strip = optimize != .Debug,
     });
+    mod.addOptions("options", options);
+    // Give the Windows executable the same icon as its installers, so the
+    // Start Menu shortcut and Explorer show it.
+    if (target.result.os.tag == .windows) {
+        mod.addWin32ResourceFile(.{ .file = b.path("assets/sample.rc"), .include_paths = &.{b.path("assets")} });
+    }
+    return b.addExecutable(.{ .name = "sample", .root_module = mod });
 }

@@ -5,13 +5,21 @@
 # exercise the MSI (silent install/uninstall with msiexec, with and without
 # ADDTOPATH) and the EXE installer (silent install, silent uninstall).
 # Must run elevated, as GitHub-hosted Windows runners do.
+#
+# -InstallerDir tests already-built installers (for example the ones a
+# release is about to publish) instead of building them first.
+
+param([string]$InstallerDir)
 
 $ErrorActionPreference = 'Stop'
-Set-Location (Join-Path $PSScriptRoot '..')
-
-zig build installer --summary all
-if ($LASTEXITCODE -ne 0) { throw "zig build installer failed" }
-Set-Location zig-out/installers
+if ($InstallerDir) {
+    Set-Location $InstallerDir
+} else {
+    Set-Location (Join-Path $PSScriptRoot '..')
+    zig build installer --summary all
+    if ($LASTEXITCODE -ne 0) { throw "zig build installer failed" }
+    Set-Location zig-out/installers
+}
 
 Write-Host '== checksums'
 foreach ($sum in Get-ChildItem *.sha256) {
@@ -26,6 +34,7 @@ $msi = (Resolve-Path "sample-1.0.0-windows-$arch.msi").Path
 $exe = (Resolve-Path "sample-1.0.0-windows-$arch-setup.exe").Path
 $dir = Join-Path $env:ProgramFiles 'Zstaller Sample'
 $app = Join-Path $dir 'sample.exe'
+$shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Zstaller Sample.lnk'
 
 function Invoke-Checked($file, $arguments) {
     $p = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru
@@ -40,16 +49,26 @@ function Test-OnPath {
 function Assert-Installed($expectOnPath) {
     if (-not (Test-Path $app)) { throw "$app was not installed" }
     if (-not (Test-Path (Join-Path $dir 'README.md'))) { throw 'README.md was not installed' }
-    $out = & $app
+    $out = (& $app) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw ('{0} exited with 0x{1:X8}' -f $app, $LASTEXITCODE) }
     Write-Host $out
     if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
+    Assert-Shortcut
+}
+
+function Assert-Shortcut {
+    if (-not (Test-Path $shortcut)) { throw "Start Menu shortcut $shortcut was not created" }
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+    if ($link.TargetPath -ne $app) { throw "shortcut points at '$($link.TargetPath)', expected '$app'" }
+    Write-Host "Start Menu shortcut OK: $shortcut -> $($link.TargetPath)"
 }
 
 function Assert-Removed {
     for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
     if (Test-Path $dir) { throw "$dir still exists: $(Get-ChildItem $dir -Force | Out-String)" }
     if (Test-OnPath) { throw 'PATH entry was not removed' }
+    if (Test-Path $shortcut) { throw 'Start Menu shortcut was not removed' }
 }
 
 Write-Host '== MSI: silent install with PATH'
@@ -65,8 +84,11 @@ Assert-Removed
 Write-Host '== MSI: silent install with ADDTOPATH=0, uninstall by product code'
 Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0"
 Assert-Installed $false
+# Only the MSI registers under its {ProductCode}; an EXE install uses a
+# named key, and passing that to msiexec opens its usage dialog.
 $code = (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
-    Where-Object { $_.DisplayName -eq 'Zstaller Sample' }).PSChildName
+    Where-Object { $_.DisplayName -eq 'Zstaller Sample' -and $_.PSChildName -like '{*}' }).PSChildName
+if (@($code).Count -ne 1) { throw "expected one MSI product code, found: $code" }
 Invoke-Checked msiexec.exe "/x $code /qn"
 Assert-Removed
 
