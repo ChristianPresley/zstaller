@@ -16,14 +16,33 @@
 
 //! zstaller: a packaged installer generator for Zig projects.
 //!
-//! The cross-compile matrix and package generators (.deb, Windows EXE,
-//! Windows MSI) land in later milestones; see README.md for the current
-//! status.
+//! This module holds the package writers (.deb, Windows EXE payload,
+//! Windows MSI) and their building blocks. Projects normally use the build
+//! API in `build.zig` (`addInstallers`) rather than this module directly.
 
 const std = @import("std");
 const build_options = @import("build_options");
 
 pub const Metadata = @import("Metadata.zig");
+pub const Target = @import("target.zig").Target;
+pub const Format = @import("target.zig").Format;
+pub const naming = @import("naming.zig");
+pub const checksum = @import("checksum.zig");
+pub const uuid = @import("uuid.zig");
+pub const deb = @import("platforms/ubuntu/deb.zig");
+pub const exe_payload = @import("platforms/windows/exe/payload.zig");
+pub const exe_cli = @import("platforms/windows/exe/stub/cli.zig");
+pub const msi = struct {
+    pub const cfb = @import("platforms/windows/msi/cfb.zig");
+    pub const cab = @import("platforms/windows/msi/cab.zig");
+    pub const database = @import("platforms/windows/msi/database.zig");
+    pub const package = @import("platforms/windows/msi/package.zig");
+};
+pub const archive = struct {
+    pub const tar = @import("archive/tar.zig");
+    pub const ar = @import("archive/ar.zig");
+    pub const deflate = @import("archive/deflate.zig");
+};
 
 /// The zstaller release this source tree corresponds to, taken from
 /// `.version` in build.zig.zon.
@@ -38,4 +57,6 @@ test "version round-trips to the build.zig.zon string" {
 
 test {
     std.testing.refAllDecls(@This());
+    std.testing.refAllDecls(archive);
+    std.testing.refAllDecls(msi);
 }
