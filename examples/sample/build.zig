@@ -1,0 +1,67 @@
+// Copyright 2026 The zstaller Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+const std = @import("std");
+const zstaller = @import("zstaller");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // The normal native build: `zig build`, `zig build run`.
+    const exe = createExe(b, target, optimize);
+    b.installArtifact(exe);
+    const run = b.addRunArtifact(exe);
+    b.step("run", "Run the sample").dependOn(&run.step);
+
+    // `zig build installer` cross-compiles the sample and writes MSI, EXE
+    // and .deb installers to zig-out/installers/.
+    const installers = zstaller.addInstallers(b, .{
+        .executable = createExe,
+        // Every target is built by default; listed here for clarity.
+        .targets = &.{ .windows_x86_64, .windows_aarch64, .ubuntu_x86_64, .ubuntu_aarch64 },
+        .icon = b.path("assets/sample.ico"),
+        .extra_files = &.{
+            .{ .source = b.path("README.md"), .dest = "README.md" },
+        },
+        .windows = .{
+            .publisher = "The zstaller Authors",
+            .display_name = "Zstaller Sample",
+            // Keep this GUID fixed for the life of your product so that new
+            // MSI versions upgrade old ones.
+            .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+            .add_to_path = .optional,
+        },
+        .deb = .{
+            .maintainer = "The zstaller Authors <noreply@example.com>",
+            .homepage = "https://github.com/ChristianPresley/zstaller",
+        },
+    });
+    b.step("installer", "Build installers for every target").dependOn(installers.step);
+}
+
+/// zstaller calls this once per target to cross-compile the application.
+fn createExe(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    return b.addExecutable(.{
+        .name = "sample",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            // Smaller installers: drop debug info from release binaries.
+            .strip = optimize != .Debug,
+        }),
+    });
+}

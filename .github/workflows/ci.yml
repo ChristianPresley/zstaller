@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Unit tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -28,8 +28,53 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Install package verification tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y msitools
+
       - name: Check formatting
-        run: zig fmt --check build.zig build.zig.zon src
+        run: zig fmt --check build.zig build.zig.zon src examples
 
       - name: Build and test
         run: zig build test --summary all
+
+  sample-linux:
+    name: Sample end-to-end (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build installers, verify and install the .deb
+        run: examples/sample/scripts/test-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-installers
+          path: examples/sample/zig-out/installers/
+          if-no-files-found: error
+
+  sample-windows:
+    name: Sample end-to-end (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build installers, silent MSI and EXE install/uninstall
+        shell: pwsh
+        run: examples/sample/scripts/test-windows.ps1
+
+      - name: Upload msiexec logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msiexec-logs
+          path: examples/sample/zig-out/installers/*.log
+          if-no-files-found: ignore
