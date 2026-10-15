@@ -85,6 +85,45 @@ jobs:
           path: examples/sample/zig-out/installers/*.log
           if-no-files-found: ignore
 
+  # Builds the sample twice from copies of the repository at different
+  # paths with separate caches and requires identical installers, then
+  # checks that SOURCE_DATE_EPOCH changes invalidate the cache.
+  reproducible:
+    name: Reproducible build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build twice and compare
+        shell: bash
+        run: examples/sample/scripts/test-reproducible.sh "$RUNNER_TEMP/SHA256SUMS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reproducible-sums-${{ matrix.os }}
+          path: ${{ runner.temp }}/SHA256SUMS
+          if-no-files-found: error
+
+  # Linux and Windows hosts must produce the same installers.
+  reproducible-across-hosts:
+    name: Reproducible across hosts
+    needs: reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reproducible-sums-*
+      - name: Compare Linux and Windows builds
+        run: diff reproducible-sums-ubuntu-latest/SHA256SUMS reproducible-sums-windows-latest/SHA256SUMS
+
   # Installs, runs and uninstalls the aarch64 MSI and EXE natively. The
   # installers come from the Ubuntu job (cross-compiled, as zstaller is
   # meant to be used), so this runner does not need Zig.

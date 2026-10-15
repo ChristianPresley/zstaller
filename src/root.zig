@@ -32,6 +32,7 @@ pub const uuid = @import("uuid.zig");
 pub const deb = @import("platforms/ubuntu/deb.zig");
 pub const exe_payload = @import("platforms/windows/exe/payload.zig");
 pub const exe_cli = @import("platforms/windows/exe/stub/cli.zig");
+pub const pe = @import("platforms/windows/pe.zig");
 pub const msi = struct {
     pub const cfb = @import("platforms/windows/msi/cfb.zig");
     pub const cab = @import("platforms/windows/msi/cab.zig");

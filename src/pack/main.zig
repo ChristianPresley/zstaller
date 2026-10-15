@@ -19,10 +19,15 @@
 //! its package writers; its command line is not a stable public API.
 //!
 //! Commands:
-//!   checksum <input> <output> <file-name>
-//!   deb      --out <path> [package options] (--file <src> <dest> <mode>)...
-//!   payload  --out <path> (--file <src> <dest>)...
-//!   msi      --out <path> [package options] (--file <src> <dest>)...
+//!   checksum     <input> <output> <file-name>
+//!   deb          --out <path> --mtime <secs> [package options] (--file <src> <dest> <mode>)...
+//!   payload      --out <path> (--file <src> <dest>)...
+//!   msi          --out <path> --mtime <secs> [package options] (--file <src> <dest>)...
+//!   pe-normalize <input> <output>
+//!
+//! Every input, including the timestamp, is a command-line argument, so the
+//! build system's cache key covers it. The tool does not read the
+//! environment.
 
 const std = @import("std");
 const zstaller = @import("zstaller");
@@ -33,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) usage();
-    const ctx: Ctx = .{ .gpa = init.gpa, .arena = arena, .io = init.io, .env = init.environ_map };
+    const ctx: Ctx = .{ .gpa = init.gpa, .arena = arena, .io = init.io };
     const cmd = args[1];
     const rest = args[2..];
     if (std.mem.eql(u8, cmd, "checksum")) {
@@ -44,6 +49,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdPayload(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "msi")) {
         try cmdMsi(ctx, rest);
+    } else if (std.mem.eql(u8, cmd, "pe-normalize")) {
+        try cmdPeNormalize(ctx, rest);
     } else {
         fail("unknown command '{s}'", .{cmd});
     }
@@ -53,7 +60,6 @@ const Ctx = struct {
     gpa: Allocator,
     arena: Allocator,
     io: Io,
-    env: *std.process.Environ.Map,
 
     fn readFile(ctx: Ctx, path: []const u8) []u8 {
         return Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(4 << 30)) catch |err|
@@ -64,16 +70,7 @@ const Ctx = struct {
         Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = path, .data = data }) catch |err|
             fail("cannot write '{s}': {t}", .{ path, err });
     }
-
-    /// Timestamp for archive entries: SOURCE_DATE_EPOCH when set, else a
-    /// fixed date (1980-01-01), so builds are reproducible by default.
-    fn mtime(ctx: Ctx) u64 {
-        const s = ctx.env.get("SOURCE_DATE_EPOCH") orelse return default_mtime;
-        return std.fmt.parseInt(u64, s, 10) catch fail("SOURCE_DATE_EPOCH is not an integer: '{s}'", .{s});
-    }
 };
-
-const default_mtime = 315532800;
 
 fn usage() noreturn {
     fail("usage: zstaller-pack <checksum|deb|payload|msi> [options]", .{});
@@ -120,6 +117,13 @@ const Options = struct {
     fn required(o: Options, key: []const u8) []const u8 {
         return o.values.get(key) orelse fail("missing required option --{s}", .{key});
     }
+
+    /// `--mtime`: seconds since the Unix epoch for every timestamp written
+    /// into the package.
+    fn mtime(o: Options) u64 {
+        const s = o.required("mtime");
+        return std.fmt.parseInt(u64, s, 10) catch fail("--mtime is not an integer: '{s}'", .{s});
+    }
 };
 
 fn oom() noreturn {
@@ -138,7 +142,7 @@ fn cmdChecksum(ctx: Ctx, args: []const []const u8) !void {
 
 fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
     const o = Options.parse(ctx.arena, args, 3, &.{
-        "out", "name", "version", "arch", "maintainer", "description", "section", "priority", "homepage", "depends", "license", "copyright",
+        "out", "mtime", "name", "version", "arch", "maintainer", "description", "section", "priority", "homepage", "depends", "license", "copyright",
     });
     const name = o.required("name");
     if (!zstaller.naming.isValidDebPackageName(name))
@@ -168,7 +172,7 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         .homepage = o.get("homepage"),
         .depends = o.get("depends"),
         .files = files.items,
-        .mtime = ctx.mtime(),
+        .mtime = o.mtime(),
     }) catch |err| fail("cannot build .deb: {t}", .{err});
     ctx.writeFile(o.required("out"), out.written());
 }
@@ -190,7 +194,7 @@ fn cmdPayload(ctx: Ctx, args: []const []const u8) !void {
 fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const msi = zstaller.msi.package;
     const o = Options.parse(ctx.arena, args, 2, &.{
-        "out",           "name",            "version", "manufacturer", "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
+        "out",           "mtime",           "name", "version", "manufacturer", "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
         "shortcut-name", "shortcut-target",
     });
     var files: std.ArrayList(msi.File) = .empty;
@@ -213,11 +217,18 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         .icon = if (o.get("icon")) |path| ctx.readFile(path) else null,
         .shortcut = if (o.get("shortcut-name")) |name| .{ .name = name, .target = o.required("shortcut-target") } else null,
         .files = files.items,
-        .timestamp = ctx.mtime(),
+        .timestamp = o.mtime(),
     }) catch |err| switch (err) {
         error.NotRepresentable => fail("MSI strings must use characters from Windows-1252", .{}),
         error.InvalidShortcut => fail("the Start Menu shortcut name is invalid or its target is not an installed file", .{}),
         else => |e| fail("cannot build MSI: {t}", .{e}),
     };
     ctx.writeFile(o.required("out"), out.written());
+}
+
+fn cmdPeNormalize(ctx: Ctx, args: []const []const u8) !void {
+    if (args.len != 2) fail("usage: pe-normalize <input> <output>", .{});
+    const image = ctx.readFile(args[0]);
+    zstaller.pe.normalize(image) catch fail("'{s}' is not a valid PE image", .{args[0]});
+    ctx.writeFile(args[1], image);
 }
