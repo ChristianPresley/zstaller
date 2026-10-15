@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows installers add a Start Menu shortcut for all users (MSI
+  `Shortcut` table; IShellLink in the EXE stub) and remove it on
+  uninstall. Turn it off with `.windows.start_menu_shortcut = false`.
+- The EXE installer offers to launch the application when an interactive
+  install finishes.
+- The sample application shows its version and install location, carries
+  the sample icon, and waits for Enter when Windows opened a console just
+  for it, so it can be launched from the Start Menu.
+- CI installs, runs and uninstalls the ARM64 packages natively on
+  `ubuntu-24.04-arm` and `windows-11-arm` runners.
+- aarch64 Windows binaries (the application and the EXE installer stub)
+  keep their debug symbols: Zig 0.16 programs for that target crash at
+  startup with an access violation when stripped.
+- Release workflow: builds the sample installers, verifies the exact files
+  on x86_64 and ARM64 Windows and Ubuntu, then publishes a GitHub release.
+
 - Build API: `addInstallers(b, options)` cross-compiles the consumer's
   executable for each target and builds its installers, with SHA-256
   checksum files, into `zig-out/installers/`. Options cover targets, icon,

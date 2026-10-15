@@ -138,6 +138,7 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `windows.install_dir_name` | display name | Folder created under Program Files. |
 | `windows.upgrade_code` | derived from name | MSI UpgradeCode. Set it once and never change it. |
 | `windows.add_to_path` | `.optional` | `.never`, `.optional` or `.always`. |
+| `windows.start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
 | `deb.maintainer` | `windows.publisher` | Debian `Maintainer` field. |
 | `deb.section`, `deb.priority` | `utils`, `optional` | Debian control fields. |
 | `deb.homepage`, `deb.depends` | none | Debian control fields. |
@@ -165,8 +166,10 @@ prereleases) are written with `~` so they sort before the release.
 
 A small native setup program (written in Zig) with the files embedded and
 compressed. It installs to `Program Files\<install dir>`, registers an entry
-in Apps & Features, writes `uninstall.exe`, and can add the install
-directory to the system PATH. It requests administrator rights.
+in Apps & Features, adds a Start Menu shortcut, writes `uninstall.exe`, and
+can add the install directory to the system PATH. An interactive install
+ends by offering to launch the application. It requests administrator
+rights.
 
 ```
 myapp-1.2.0-windows-x86_64-setup.exe /S                 silent install
@@ -180,7 +183,7 @@ Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments.
 ### Windows MSI
 
 A per-machine Windows Installer package with one component per file,
-Apps & Features icon, major-upgrade support (installing a newer version
+Apps & Features icon, a Start Menu shortcut, major-upgrade support (installing a newer version
 replaces the old one; installing an older one is blocked) and an optional
 PATH entry controlled by the `ADDTOPATH` property.
 
@@ -194,6 +197,14 @@ MSI versions use `major.minor.patch` only (major and minor up to 255, patch
 up to 65535); prerelease and build suffixes are dropped, so keep MSI release
 versions distinct in those three fields. See
 [docs/msi.md](docs/msi.md) for how the MSI is written.
+
+## Try the sample installers
+
+Each [GitHub release](https://github.com/ChristianPresley/zstaller/releases)
+carries the sample application's MSI, EXE and `.deb` installers, built by
+the [release workflow](.github/workflows/release.yml) and installed, run and
+uninstalled on x86_64 and ARM64 Windows and Ubuntu before publishing. The
+release notes explain how to install, run and remove them.
 
 ## Reproducible builds
 
@@ -224,8 +235,6 @@ Platforms share one interface, described in
 - The EXE and MSI user interfaces are minimal (message boxes and the basic
   Windows Installer progress UI).
 - MSI strings must be representable in Windows-1252.
-- ARM64 Windows packages are verified structurally in CI; the end-to-end
-  install tests run on x86_64.
 
 ## Building from source
 

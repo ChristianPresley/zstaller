@@ -39,8 +39,13 @@ jobs:
         run: zig build test --summary all
 
   sample-linux:
-    name: Sample end-to-end (Ubuntu)
-    runs-on: ubuntu-latest
+    name: Sample end-to-end (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The arm64 runner installs and runs the arm64 .deb natively.
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -52,13 +57,14 @@ jobs:
         run: examples/sample/scripts/test-linux.sh
 
       - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
         with:
           name: sample-installers
           path: examples/sample/zig-out/installers/
           if-no-files-found: error
 
   sample-windows:
-    name: Sample end-to-end (Windows)
+    name: Sample end-to-end (windows-latest)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -75,6 +81,33 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: msiexec-logs
+          name: msiexec-logs-windows-latest
           path: examples/sample/zig-out/installers/*.log
+          if-no-files-found: ignore
+
+  # Installs, runs and uninstalls the aarch64 MSI and EXE natively. The
+  # installers come from the Ubuntu job (cross-compiled, as zstaller is
+  # meant to be used), so this runner does not need Zig.
+  sample-windows-arm:
+    name: Sample end-to-end (windows-11-arm)
+    needs: sample-linux
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sample-installers
+          path: installers
+
+      - name: Silent MSI and EXE install/uninstall
+        shell: pwsh
+        run: examples/sample/scripts/test-windows.ps1 -InstallerDir "$PWD/installers"
+
+      - name: Upload msiexec logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msiexec-logs-windows-11-arm
+          path: installers/*.log
           if-no-files-found: ignore

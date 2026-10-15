@@ -5,12 +5,18 @@
 # End-to-end test on Ubuntu: build every installer, verify checksums,
 # inspect the .deb packages with dpkg-deb, then install, run and remove the
 # package for the host architecture. Needs sudo for dpkg -i / -r.
+#
+# Pass a directory to test already-built installers (for example the ones a
+# release is about to publish) instead of building them first.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-zig build installer --summary all
-
-cd zig-out/installers
+if [ $# -ge 1 ]; then
+  cd "$1"
+else
+  cd "$(dirname "$0")/.."
+  zig build installer --summary all
+  cd zig-out/installers
+fi
 echo "== checksums"
 sha256sum -c ./*.sha256
 
@@ -41,7 +47,8 @@ echo "== install $deb"
 sudo dpkg -i "$deb"
 out="$(sample)"
 echo "$out"
-grep -q "Hello from the zstaller sample on linux" <<<"$out"
+grep -q "Hello from the zstaller sample on linux-$(uname -m)" <<<"$out"
+grep -q "Installed at: /usr/bin/sample" <<<"$out"
 test -f /usr/share/sample/README.md
 test -f /usr/share/doc/sample/copyright
 dpkg -s sample | grep -q '^Version: 1.0.0$'

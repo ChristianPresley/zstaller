@@ -164,3 +164,80 @@ pub extern "kernel32" fn CreateProcessW(
 pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) c_int;
 
 pub extern "kernel32" fn GetSystemDirectoryW(lpBuffer: [*]WCHAR, uSize: u32) callconv(.winapi) u32;
+
+pub extern "shell32" fn ShellExecuteW(
+    hwnd: ?HWND,
+    lpOperation: ?[*:0]const WCHAR,
+    lpFile: [*:0]const WCHAR,
+    lpParameters: ?[*:0]const WCHAR,
+    lpDirectory: ?[*:0]const WCHAR,
+    nShowCmd: c_int,
+) callconv(.winapi) isize;
+
+pub const SW_SHOWNORMAL: c_int = 1;
+
+// ---- COM, for writing Start Menu shortcuts with IShellLinkW.
+
+pub const HRESULT = i32;
+pub const GUID = extern struct { data1: u32, data2: u16, data3: u16, data4: [8]u8 };
+
+pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
+pub const CLSCTX_INPROC_SERVER: DWORD = 0x1;
+
+pub const CLSID_ShellLink: GUID = .{ .data1 = 0x00021401, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+pub const IID_IShellLinkW: GUID = .{ .data1 = 0x000214F9, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+pub const IID_IPersistFile: GUID = .{ .data1 = 0x0000010B, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+
+pub extern "ole32" fn CoInitializeEx(pvReserved: ?*anyopaque, dwCoInit: DWORD) callconv(.winapi) HRESULT;
+pub extern "ole32" fn CoUninitialize() callconv(.winapi) void;
+pub extern "ole32" fn CoCreateInstance(
+    rclsid: *const GUID,
+    pUnkOuter: ?*anyopaque,
+    dwClsContext: DWORD,
+    riid: *const GUID,
+    ppv: *?*anyopaque,
+) callconv(.winapi) HRESULT;
+
+const Unused = *const fn () callconv(.winapi) void;
+
+/// IShellLinkW vtable, in declaration order (shobjidl_core.h).
+pub const IShellLinkW = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: *const fn (*IShellLinkW, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT,
+        AddRef: Unused,
+        Release: *const fn (*IShellLinkW) callconv(.winapi) u32,
+        GetPath: Unused,
+        GetIDList: Unused,
+        SetIDList: Unused,
+        GetDescription: Unused,
+        SetDescription: *const fn (*IShellLinkW, [*:0]const WCHAR) callconv(.winapi) HRESULT,
+        GetWorkingDirectory: Unused,
+        SetWorkingDirectory: *const fn (*IShellLinkW, [*:0]const WCHAR) callconv(.winapi) HRESULT,
+        GetArguments: Unused,
+        SetArguments: Unused,
+        GetHotkey: Unused,
+        SetHotkey: Unused,
+        GetShowCmd: Unused,
+        SetShowCmd: Unused,
+        GetIconLocation: Unused,
+        SetIconLocation: *const fn (*IShellLinkW, [*:0]const WCHAR, c_int) callconv(.winapi) HRESULT,
+        SetRelativePath: Unused,
+        Resolve: Unused,
+        SetPath: *const fn (*IShellLinkW, [*:0]const WCHAR) callconv(.winapi) HRESULT,
+    },
+};
+
+/// IPersistFile vtable, in declaration order (objidl.h).
+pub const IPersistFile = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: Unused,
+        AddRef: Unused,
+        Release: *const fn (*IPersistFile) callconv(.winapi) u32,
+        GetClassID: Unused,
+        IsDirty: Unused,
+        Load: Unused,
+        Save: *const fn (*IPersistFile, [*:0]const WCHAR, c_int) callconv(.winapi) HRESULT,
+        SaveCompleted: Unused,
+        GetCurFile: Unused,
+    },
+};
