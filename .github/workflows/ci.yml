@@ -64,13 +64,8 @@ jobs:
           if-no-files-found: error
 
   sample-windows:
-    name: Sample end-to-end (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # The ARM64 runner installs and runs the aarch64 MSI and EXE natively.
-        os: [windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
+    name: Sample end-to-end (windows-latest)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -86,6 +81,33 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: msiexec-logs-${{ matrix.os }}
+          name: msiexec-logs-windows-latest
           path: examples/sample/zig-out/installers/*.log
+          if-no-files-found: ignore
+
+  # Installs, runs and uninstalls the aarch64 MSI and EXE natively. The
+  # installers come from the Ubuntu job (cross-compiled, as zstaller is
+  # meant to be used), so this runner does not need Zig.
+  sample-windows-arm:
+    name: Sample end-to-end (windows-11-arm)
+    needs: sample-linux
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sample-installers
+          path: installers
+
+      - name: Silent MSI and EXE install/uninstall
+        shell: pwsh
+        run: examples/sample/scripts/test-windows.ps1 -InstallerDir "$PWD/installers"
+
+      - name: Upload msiexec logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msiexec-logs-windows-11-arm
+          path: installers/*.log
           if-no-files-found: ignore
