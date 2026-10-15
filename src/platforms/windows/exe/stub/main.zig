@@ -142,10 +142,25 @@ fn install(s: State, cmd: cli.Command) !ExitCode {
         try Io.Dir.copyFileAbsolute(self_path, uninstaller_path, s.io, .{});
     }
 
-    try registerUninstall(s, dir, uninstaller_path, total_bytes, add_to_path);
+    const app_path = try std.fs.path.join(s.gpa, &.{ dir, config.exe_name });
+    const shortcut_path: ?[]const u8 = if (config.start_menu_shortcut) blk: {
+        const icon = if (config.has_icon) uninstaller_path else app_path;
+        break :blk createShortcut(s, app_path, dir, icon) catch |err| sc: {
+            // The application still works without its shortcut.
+            std.debug.print("could not create the Start Menu shortcut: {t}\n", .{err});
+            break :sc null;
+        };
+    } else null;
+
+    try registerUninstall(s, dir, uninstaller_path, total_bytes, add_to_path, shortcut_path);
     if (add_to_path) try editSystemPath(s, dir, .add);
 
-    s.message(config.display_name ++ " " ++ config.version ++ " was installed successfully.", w32.MB_ICONINFORMATION);
+    const done = config.display_name ++ " " ++ config.version ++ " was installed successfully.";
+    if (s.silent) {
+        s.message(done, w32.MB_ICONINFORMATION);
+    } else if (s.confirm(done ++ "\n\nLaunch " ++ config.display_name ++ " now?")) {
+        launch(s, app_path, dir);
+    }
     return .success;
 }
 
@@ -185,6 +200,9 @@ fn uninstall(s: State) !ExitCode {
         }
     }
 
+    if (readString(s.gpa, uninstall_key_prefix ++ config.registry_key, "ZstallerShortcut")) |shortcut| {
+        Io.Dir.deleteFileAbsolute(s.io, shortcut) catch {};
+    }
     deleteKey(s.gpa, uninstall_key_prefix ++ config.registry_key);
     scheduleSelfDelete(s, self_path, dir);
 
@@ -204,7 +222,7 @@ fn readManifest(s: State, dir: Io.Dir) ?[]const []const u8 {
     return cli.manifestPaths(s.gpa, text) catch null;
 }
 
-fn registerUninstall(s: State, dir: []const u8, uninstaller: []const u8, total_bytes: u64, added_to_path: bool) !void {
+fn registerUninstall(s: State, dir: []const u8, uninstaller: []const u8, total_bytes: u64, added_to_path: bool, shortcut: ?[]const u8) !void {
     const key = try createKey(s.gpa, uninstall_key_prefix ++ config.registry_key);
     defer _ = w32.RegCloseKey(key);
     const quoted = try std.fmt.allocPrint(s.gpa, "\"{s}\" /uninstall", .{uninstaller});
@@ -219,6 +237,49 @@ fn registerUninstall(s: State, dir: []const u8, uninstaller: []const u8, total_b
     try setDword(s.gpa, key, "NoRepair", 1);
     try setDword(s.gpa, key, "EstimatedSize", @intCast(@min(total_bytes / 1024, std.math.maxInt(u32))));
     try setDword(s.gpa, key, "ZstallerAddedToPath", @intFromBool(added_to_path));
+    if (shortcut) |path| try setString(s.gpa, key, "ZstallerShortcut", path, w32.REG_SZ);
+}
+
+/// Writes `<ProgramData>\Microsoft\Windows\Start Menu\Programs\<name>.lnk`
+/// for all users and returns its path.
+fn createShortcut(s: State, target: []const u8, work_dir: []const u8, icon: []const u8) ![]const u8 {
+    const program_data = s.env.get("ProgramData") orelse s.env.get("ALLUSERSPROFILE") orelse "C:\\ProgramData";
+    const programs = try std.fs.path.join(s.gpa, &.{ program_data, "Microsoft", "Windows", "Start Menu", "Programs" });
+    try Io.Dir.cwd().createDirPath(s.io, programs);
+    const link_path = try std.fs.path.join(s.gpa, &.{ programs, config.display_name ++ ".lnk" });
+
+    const hr_init = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+    if (hr_init < 0) return error.ComInitFailed;
+    defer w32.CoUninitialize();
+
+    var obj: ?*anyopaque = null;
+    if (w32.CoCreateInstance(&w32.CLSID_ShellLink, null, w32.CLSCTX_INPROC_SERVER, &w32.IID_IShellLinkW, &obj) < 0) return error.ShellLinkUnavailable;
+    const link: *w32.IShellLinkW = @ptrCast(@alignCast(obj.?));
+    defer _ = link.vtable.Release(link);
+
+    if (link.vtable.SetPath(link, try wide(s.gpa, target)) < 0) return error.ShortcutFailed;
+    if (link.vtable.SetWorkingDirectory(link, try wide(s.gpa, work_dir)) < 0) return error.ShortcutFailed;
+    if (link.vtable.SetIconLocation(link, try wide(s.gpa, icon), 0) < 0) return error.ShortcutFailed;
+    if (config.description.len > 0) _ = link.vtable.SetDescription(link, try wide(s.gpa, config.description));
+
+    var pf_obj: ?*anyopaque = null;
+    if (link.vtable.QueryInterface(link, &w32.IID_IPersistFile, &pf_obj) < 0) return error.ShortcutFailed;
+    const pf: *w32.IPersistFile = @ptrCast(@alignCast(pf_obj.?));
+    defer _ = pf.vtable.Release(pf);
+    if (pf.vtable.Save(pf, try wide(s.gpa, link_path), 1) < 0) return error.ShortcutFailed;
+    return link_path;
+}
+
+/// Starts the installed application in its own window.
+fn launch(s: State, app_path: []const u8, dir: []const u8) void {
+    const file_w = wide(s.gpa, app_path) catch return;
+    const dir_w = wide(s.gpa, dir) catch return;
+    const verb_w = wide(s.gpa, "open") catch return;
+    _ = w32.ShellExecuteW(null, verb_w, file_w, null, dir_w, w32.SW_SHOWNORMAL);
+}
+
+fn wide(gpa: Allocator, text: []const u8) ![:0]const u16 {
+    return std.unicode.wtf8ToWtf16LeAllocZ(gpa, text);
 }
 
 const PathEdit = enum { add, remove };
@@ -307,6 +368,15 @@ fn queryString(gpa: Allocator, key: w32.HKEY, name: []const u8) ![]const u8 {
     var len = cb / 2;
     while (len > 0 and buf[len - 1] == 0) len -= 1;
     return std.unicode.wtf16LeToWtf8Alloc(gpa, buf[0..len]);
+}
+
+fn readString(gpa: Allocator, sub_key: []const u8, name: []const u8) ?[]const u8 {
+    const sub_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key) catch return null;
+    var key: w32.HKEY = undefined;
+    if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;
+    defer _ = w32.RegCloseKey(key);
+    const value = queryString(gpa, key, name) catch return null;
+    return if (value.len == 0) null else value;
 }
 
 fn readDword(sub_key: []const u8, name: []const u8, gpa: Allocator) ?u32 {

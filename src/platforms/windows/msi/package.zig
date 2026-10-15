@@ -17,7 +17,8 @@
 //! Builds a complete per-machine Windows Installer package for an
 //! application: directory tree, one component per file, an embedded
 //! MSZIP cabinet, major-upgrade handling, optional PATH entry and the
-//! standard install/uninstall sequences. No UI tables are written, so
+//! standard install/uninstall sequences, plus an optional Start Menu
+//! shortcut. No UI tables are written, so
 //! msiexec shows its basic progress UI, and `/qn` installs silently.
 
 const std = @import("std");
@@ -58,6 +59,13 @@ pub const File = struct {
     data: []const u8,
 };
 
+pub const Shortcut = struct {
+    /// Shortcut name in the Start Menu, without `.lnk`.
+    name: []const u8,
+    /// Install path of the file it opens; must be one of `files`.
+    target: []const u8,
+};
+
 pub const Product = struct {
     name: []const u8,
     /// Numeric `major.minor.build` version.
@@ -71,12 +79,14 @@ pub const Product = struct {
     install_dir: []const u8,
     add_to_path: PathMode = .never,
     icon: ?[]const u8 = null,
+    /// Start Menu shortcut for all users, removed on uninstall.
+    shortcut: ?Shortcut = null,
     files: []const File,
     /// Seconds since the Unix epoch for the summary timestamps.
     timestamp: u64 = 0,
 };
 
-pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidVersion, NoFiles, TooManyFiles };
+pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidVersion, NoFiles, TooManyFiles };
 
 const cabinet_name = "product.cab";
 const icon_key = "ProductIcon.ico";
@@ -107,6 +117,11 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(f.data);
         }
         if (p.icon) |i| h.update(i);
+        if (p.shortcut) |sc| {
+            h.update(sc.name);
+            h.update(&.{0});
+            h.update(sc.target);
+        }
         var d: [32]u8 = undefined;
         h.final(&d);
         var hex: [64]u8 = undefined;
@@ -213,6 +228,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     const file_vital = 512;
 
     const cab_files = try a.alloc(cab.File, sorted_files.len);
+    var shortcut_file: ?struct { file: []const u8, component: []const u8 } = null;
     for (sorted_files, 0..) |f, i| {
         const file_key = try std.fmt.allocPrint(a, "F{d}", .{i + 1});
         const comp_key = try std.fmt.allocPrint(a, "C{d}", .{i + 1});
@@ -233,6 +249,44 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         });
         try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = comp_key } });
         cab_files[i] = .{ .name = file_key, .data = f.data };
+        if (p.shortcut) |sc| if (std.mem.eql(u8, sc.target, f.path)) {
+            shortcut_file = .{ .file = file_key, .component = comp_key };
+        };
+    }
+
+    // ---- Start Menu shortcut, installed with the file it points at.
+    if (p.shortcut) |sc| {
+        const target = shortcut_file orelse return error.InvalidShortcut;
+        if (sc.name.len == 0 or std.mem.indexOfAny(u8, sc.name, "\\/:*?\"<>|") != null) return error.InvalidShortcut;
+        try db.addRow(directory, &.{ .{ .str = "ProgramMenuFolder" }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+        const shortcut = try db.addTable("Shortcut", &.{
+            .{ .name = "Shortcut", .type = T.str(72) | T.key },
+            .{ .name = "Directory_", .type = T.str(72) },
+            .{ .name = "Name", .type = T.str(128) | T.localizable },
+            .{ .name = "Component_", .type = T.str(72) },
+            .{ .name = "Target", .type = T.str(72) },
+            .{ .name = "Arguments", .type = T.str(255) | T.nullable },
+            .{ .name = "Description", .type = T.str(255) | T.localizable | T.nullable },
+            .{ .name = "Hotkey", .type = T.int2 | T.nullable },
+            .{ .name = "Icon_", .type = T.str(72) | T.nullable },
+            .{ .name = "IconIndex", .type = T.int2 | T.nullable },
+            .{ .name = "ShowCmd", .type = T.int2 | T.nullable },
+            .{ .name = "WkDir", .type = T.str(72) | T.nullable },
+        });
+        try db.addRow(shortcut, &.{
+            .{ .str = "SStartMenu" },
+            .{ .str = "ProgramMenuFolder" },
+            .{ .str = try short_names.longName(a, "ProgramMenuFolder", sc.name) },
+            .{ .str = target.component },
+            .{ .str = try std.fmt.allocPrint(a, "[#{s}]", .{target.file}) },
+            .null,
+            .{ .str = p.description },
+            .null,
+            if (p.icon != null) Value{ .str = icon_key } else .null,
+            if (p.icon != null) Value{ .int = 0 } else .null,
+            .null,
+            .{ .str = "INSTALLDIR" },
+        });
     }
 
     // ---- PATH
@@ -331,15 +385,15 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     };
     const execute = try db.addTable("InstallExecuteSequence", &seq_cols);
     const execute_actions = [_]struct { []const u8, i32 }{
-        .{ "FindRelatedProducts", 25 },    .{ "LaunchConditions", 100 },          .{ "ValidateProductID", 700 },
-        .{ "CostInitialize", 800 },        .{ "FileCost", 900 },                  .{ "CostFinalize", 1000 },
-        .{ "MigrateFeatureStates", 1200 }, .{ "InstallValidate", 1400 },          .{ "RemoveExistingProducts", 1401 },
-        .{ "InstallInitialize", 1500 },    .{ "ProcessComponents", 1600 },        .{ "UnpublishFeatures", 1800 },
-        .{ "RemoveRegistryValues", 2600 }, .{ "RemoveEnvironmentStrings", 3300 }, .{ "RemoveFiles", 3500 },
-        .{ "RemoveFolders", 3600 },        .{ "CreateFolders", 3700 },            .{ "InstallFiles", 4000 },
-        .{ "WriteRegistryValues", 5000 },  .{ "WriteEnvironmentStrings", 5200 },  .{ "RegisterUser", 6000 },
-        .{ "RegisterProduct", 6100 },      .{ "PublishFeatures", 6300 },          .{ "PublishProduct", 6400 },
-        .{ "InstallFinalize", 6600 },
+        .{ "FindRelatedProducts", 25 },       .{ "LaunchConditions", 100 },   .{ "ValidateProductID", 700 },
+        .{ "CostInitialize", 800 },           .{ "FileCost", 900 },           .{ "CostFinalize", 1000 },
+        .{ "MigrateFeatureStates", 1200 },    .{ "InstallValidate", 1400 },   .{ "RemoveExistingProducts", 1401 },
+        .{ "InstallInitialize", 1500 },       .{ "ProcessComponents", 1600 }, .{ "UnpublishFeatures", 1800 },
+        .{ "RemoveRegistryValues", 2600 },    .{ "RemoveShortcuts", 3200 },   .{ "RemoveEnvironmentStrings", 3300 },
+        .{ "RemoveFiles", 3500 },             .{ "RemoveFolders", 3600 },     .{ "CreateFolders", 3700 },
+        .{ "InstallFiles", 4000 },            .{ "CreateShortcuts", 4500 },   .{ "WriteRegistryValues", 5000 },
+        .{ "WriteEnvironmentStrings", 5200 }, .{ "RegisterUser", 6000 },      .{ "RegisterProduct", 6100 },
+        .{ "PublishFeatures", 6300 },         .{ "PublishProduct", 6400 },    .{ "InstallFinalize", 6600 },
     };
     for (execute_actions) |act| try db.addRow(execute, &.{ .{ .str = act[0] }, .null, .{ .int = act[1] } });
     const ui = try db.addTable("InstallUISequence", &seq_cols);
@@ -552,6 +606,8 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
         .platform = .arm64,
         .install_dir = "Demo",
         .add_to_path = .always,
+        .icon = "ICON",
+        .shortcut = .{ .name = "Demo App", .target = "demo.exe" },
         .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
     });
     try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
@@ -569,4 +625,29 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
         return error.MsiinfoRejected;
     }
     try testing.expect(std.mem.indexOf(u8, result.stdout, "ProductVersion\t2.0.1") != null);
+
+    const shortcuts = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "Shortcut" } });
+    defer gpa.free(shortcuts.stdout);
+    defer gpa.free(shortcuts.stderr);
+    try testing.expect(std.mem.indexOf(u8, shortcuts.stdout, "SStartMenu\tProgramMenuFolder\tDEMOAP~1|Demo App\tC1\t[#F1]") != null);
+}
+
+test "shortcut must point at an installed file" {
+    const gpa = testing.allocator;
+    var out: Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var product: Product = .{
+        .name = "D",
+        .version = "1.0.0",
+        .manufacturer = "M",
+        .description = "d",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "D",
+        .shortcut = .{ .name = "D", .target = "missing.exe" },
+        .files = &.{.{ .path = "d.exe", .data = "x" }},
+    };
+    try testing.expectError(error.InvalidShortcut, write(gpa, &out.writer, product));
+    product.shortcut = .{ .name = "a/b", .target = "d.exe" };
+    try testing.expectError(error.InvalidShortcut, write(gpa, &out.writer, product));
 }

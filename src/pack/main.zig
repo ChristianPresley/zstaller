@@ -190,7 +190,8 @@ fn cmdPayload(ctx: Ctx, args: []const []const u8) !void {
 fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const msi = zstaller.msi.package;
     const o = Options.parse(ctx.arena, args, 2, &.{
-        "out", "name", "version", "manufacturer", "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
+        "out",           "name",            "version", "manufacturer", "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
+        "shortcut-name", "shortcut-target",
     });
     var files: std.ArrayList(msi.File) = .empty;
     for (o.files.items) |f| {
@@ -210,10 +211,12 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         .install_dir = o.required("install-dir"),
         .add_to_path = std.meta.stringToEnum(msi.PathMode, path_arg) orelse fail("invalid --add-to-path '{s}'", .{path_arg}),
         .icon = if (o.get("icon")) |path| ctx.readFile(path) else null,
+        .shortcut = if (o.get("shortcut-name")) |name| .{ .name = name, .target = o.required("shortcut-target") } else null,
         .files = files.items,
         .timestamp = ctx.mtime(),
     }) catch |err| switch (err) {
         error.NotRepresentable => fail("MSI strings must use characters from Windows-1252", .{}),
+        error.InvalidShortcut => fail("the Start Menu shortcut name is invalid or its target is not an installed file", .{}),
         else => |e| fail("cannot build MSI: {t}", .{e}),
     };
     ctx.writeFile(o.required("out"), out.written());

@@ -86,6 +86,9 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "exe_name", exe_name);
     config.addOption([]const u8, "install_dir_name", o.windows.install_dir_name orelse ctx.displayName());
     config.addOption([]const u8, "registry_key", b.fmt("zstaller.{s}", .{ctx.meta.name}));
+    config.addOption(bool, "start_menu_shortcut", o.windows.start_menu_shortcut);
+    config.addOption(bool, "has_icon", o.icon != null);
+    config.addOption([]const u8, "description", ctx.meta.description orelse "");
     config.addOption(PathMode, "add_to_path", switch (o.windows.add_to_path) {
         .never => .never,
         .optional => .optional,
@@ -104,6 +107,8 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     });
     stub_mod.linkSystemLibrary("advapi32", .{});
     stub_mod.linkSystemLibrary("user32", .{});
+    stub_mod.linkSystemLibrary("ole32", .{});
+    stub_mod.linkSystemLibrary("shell32", .{});
     if (o.icon) |icon| {
         _ = wf.addCopyFile(icon, "app.ico");
         const rc = wf.add("installer.rc", "1 ICON \"app.ico\"\n");
@@ -146,6 +151,9 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     run.addArgs(&.{ "--platform", ctx.target.msiPlatform() });
     run.addArgs(&.{ "--install-dir", o.windows.install_dir_name orelse ctx.displayName() });
     run.addArgs(&.{ "--add-to-path", @tagName(o.windows.add_to_path) });
+    if (o.windows.start_menu_shortcut) {
+        run.addArgs(&.{ "--shortcut-name", ctx.displayName(), "--shortcut-target", ctx.binary.out_filename });
+    }
     if (ctx.meta.license) |l| run.addArgs(&.{ "--license", l });
     if (o.icon) |icon| {
         run.addArg("--icon");

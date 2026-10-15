@@ -61,6 +61,9 @@ pub const WindowsOptions = struct {
     /// the package name.
     upgrade_code: ?[]const u8 = null,
     add_to_path: PathMode = .optional,
+    /// Add a Start Menu shortcut, named after `display_name`, that opens
+    /// the application. Both installers remove it on uninstall.
+    start_menu_shortcut: bool = true,
 };
 
 pub const DebOptions = struct {
