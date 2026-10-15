@@ -177,6 +177,39 @@ pub extern "kernel32" fn MoveFileExW(
     dwFlags: DWORD,
 ) callconv(.winapi) c_int;
 
+// ---- Finding and ending programs that run from the install directory.
+
+pub const TH32CS_SNAPPROCESS: DWORD = 0x2;
+pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(std.math.maxInt(usize));
+pub const PROCESS_TERMINATE: DWORD = 0x0001;
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+pub const WAIT_OBJECT_0: DWORD = 0;
+pub const MAX_PATH = 260;
+
+pub const PROCESSENTRY32W = extern struct {
+    dwSize: DWORD,
+    cntUsage: DWORD = 0,
+    th32ProcessID: DWORD = 0,
+    th32DefaultHeapID: usize = 0,
+    th32ModuleID: DWORD = 0,
+    cntThreads: DWORD = 0,
+    th32ParentProcessID: DWORD = 0,
+    pcPriClassBase: i32 = 0,
+    dwFlags: DWORD = 0,
+    szExeFile: [MAX_PATH]WCHAR = @splat(0),
+};
+
+pub extern "kernel32" fn CreateToolhelp32Snapshot(dwFlags: DWORD, th32ProcessID: DWORD) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn Process32FirstW(hSnapshot: HANDLE, lppe: *PROCESSENTRY32W) callconv(.winapi) c_int;
+pub extern "kernel32" fn Process32NextW(hSnapshot: HANDLE, lppe: *PROCESSENTRY32W) callconv(.winapi) c_int;
+pub extern "kernel32" fn QueryFullProcessImageNameW(
+    hProcess: HANDLE,
+    dwFlags: DWORD,
+    lpExeName: [*]WCHAR,
+    lpdwSize: *DWORD,
+) callconv(.winapi) c_int;
+pub extern "kernel32" fn TerminateProcess(hProcess: HANDLE, uExitCode: u32) callconv(.winapi) c_int;
+
 pub extern "shell32" fn ShellExecuteW(
     hwnd: ?HWND,
     lpOperation: ?[*:0]const WCHAR,

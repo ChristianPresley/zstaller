@@ -43,6 +43,9 @@ pub fn build(b: *std.Build) void {
             // MSI versions upgrade old ones.
             .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
             .add_to_path = .optional,
+            // If the sample is running, offer to force-quit it instead of
+            // failing to replace or remove its files.
+            .close_running_apps = true,
         },
         .deb = .{
             .maintainer = "The zstaller Authors <noreply@example.com>",

@@ -64,6 +64,14 @@ pub const WindowsOptions = struct {
     /// Add a Start Menu shortcut, named after `display_name`, that opens
     /// the application. Both installers remove it on uninstall.
     start_menu_shortcut: bool = true,
+    /// What the EXE installer and uninstaller do when programs are still
+    /// running from the install directory, whose files Windows cannot
+    /// replace or delete. When false, they stop before changing anything
+    /// and tell the user which programs to close. When true, they list
+    /// each program with its process ID and offer to force-quit them; a
+    /// silent (`/S`) run force-quits them without asking. The MSI is not
+    /// affected: Windows Installer handles files in use itself.
+    close_running_apps: bool = false,
 };
 
 pub const DebOptions = struct {

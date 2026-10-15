@@ -110,6 +110,8 @@ fn install(s: State, cmd: cli.Command, self_path: []const u8) !ExitCode {
         return .cancelled;
     }
 
+    if (try ensureNotRunning(s, dir, .install)) |code| return code;
+
     var decoded = try payload.decode(s.gpa, payload_bytes);
     defer decoded.deinit(s.gpa);
 
@@ -175,6 +177,7 @@ fn uninstall(s: State, self_path: []const u8) !ExitCode {
         readString(s.gpa, uninstall_key_prefix ++ config.registry_key, "InstallLocation") orelse
             return s.fail(config.display_name ++ " is not installed.", .{});
     if (!s.confirm("Remove " ++ config.display_name ++ " and all of its files?")) return .cancelled;
+    if (try ensureNotRunning(s, dir, .uninstall)) |code| return code;
 
     var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
     defer install_dir.close(s.io);
@@ -194,6 +197,13 @@ fn uninstall(s: State, self_path: []const u8) !ExitCode {
 
     for (paths) |p| install_dir.deleteFile(s.io, p) catch |err| switch (err) {
         error.FileNotFound => {},
+        // A program that `ensureNotRunning` cannot see, such as an editor,
+        // has the file open.
+        error.AccessDenied, error.FileBusy => return s.fail(
+            "Uninstall failed: {s}\\{s} is in use by another program, so it cannot be removed.\n\n" ++
+                "Close the program that is using it, then run the uninstaller again.",
+            .{ dir, p },
+        ),
         else => return err,
     };
     install_dir.deleteFile(s.io, manifest_name) catch {};
@@ -234,6 +244,94 @@ fn defaultInstallDir(s: State) ![]const u8 {
     // process; ProgramFiles is the fallback.
     const base = s.env.get("ProgramW6432") orelse s.env.get("ProgramFiles") orelse "C:\\Program Files";
     return std.fs.path.join(s.gpa, &.{ base, config.install_dir_name });
+}
+
+const Operation = enum { install, uninstall };
+
+/// Windows cannot replace or delete the files of a running program, so
+/// install and uninstall check first, before they change anything, for
+/// programs running from `dir`. Returns null when none are left running,
+/// else the exit code to stop with. With `config.close_running_apps` the
+/// user is asked to force-quit them (silent runs do so without asking);
+/// without it, the user is told to close them.
+fn ensureNotRunning(s: State, dir: []const u8, op: Operation) !?ExitCode {
+    const running = try findRunning(s, dir);
+    if (running.len == 0) return null;
+    const list = try cli.processList(s.gpa, running);
+    const action, const tool = switch (op) {
+        .install => .{ "updated", "installer" },
+        .uninstall => .{ "uninstalled", "uninstaller" },
+    };
+
+    if (!config.close_running_apps) {
+        return s.fail(
+            config.display_name ++ " cannot be {s} while it is running, because Windows cannot remove files that are in use.\n\n" ++
+                "Still running:\n{s}\n\nClose {s}, then run the {s} again.",
+            .{ action, list, if (running.len == 1) "it" else "them", tool },
+        );
+    }
+    const question = try std.fmt.allocPrint(
+        s.gpa,
+        config.display_name ++ " is still running. It must be closed before it can be {s}:\n\n{s}\n\n" ++
+            "Force-quit {s} now? Unsaved work in {s} will be lost.",
+        .{ action, list, if (running.len == 1) "it" else "them", if (running.len == 1) "it" else "them" },
+    );
+    if (!s.confirm(question)) return .cancelled;
+
+    for (running) |p| {
+        if (!forceQuit(p.pid)) {
+            return s.fail("Could not close {s} (process ID {d}).\n\nClose it, then run the {s} again.", .{ p.name, p.pid, tool });
+        }
+        if (s.silent) std.debug.print("closed {s} (process ID {d})\n", .{ p.name, p.pid });
+    }
+    return null;
+}
+
+/// Other processes whose executable is inside `dir`. Processes this
+/// process cannot query (protected system processes) are skipped; none of
+/// them run from an application's install directory.
+fn findRunning(s: State, dir: []const u8) ![]const cli.RunningProcess {
+    const snapshot = w32.CreateToolhelp32Snapshot(w32.TH32CS_SNAPPROCESS, 0);
+    if (snapshot == w32.INVALID_HANDLE_VALUE) return &.{};
+    defer _ = w32.CloseHandle(snapshot);
+
+    const self_pid = w32.GetCurrentProcessId();
+    var found: std.ArrayList(cli.RunningProcess) = .empty;
+    var entry: w32.PROCESSENTRY32W = .{ .dwSize = @sizeOf(w32.PROCESSENTRY32W) };
+    var more = w32.Process32FirstW(snapshot, &entry) != 0;
+    while (more) : (more = w32.Process32NextW(snapshot, &entry) != 0) {
+        const pid = entry.th32ProcessID;
+        if (pid == 0 or pid == self_pid) continue;
+        const image = imagePath(s.gpa, pid) orelse continue;
+        if (!cli.isInsideDir(image, dir)) continue;
+        try found.append(s.gpa, .{ .pid = pid, .name = cli.processName(image) });
+    }
+    return found.items;
+}
+
+fn imagePath(gpa: Allocator, pid: w32.DWORD) ?[]const u8 {
+    const process = w32.OpenProcess(w32.PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return null;
+    defer _ = w32.CloseHandle(process);
+    var buf: [1024]u16 = undefined;
+    var len: w32.DWORD = buf.len;
+    if (w32.QueryFullProcessImageNameW(process, 0, &buf, &len) == 0) return null;
+    return std.unicode.wtf16LeToWtf8Alloc(gpa, buf[0..len]) catch null;
+}
+
+/// Ends process `pid` and waits up to 10 seconds for it to exit, so its
+/// files can be removed. Returns true if it is gone.
+fn forceQuit(pid: w32.DWORD) bool {
+    const process = w32.OpenProcess(w32.PROCESS_TERMINATE | w32.SYNCHRONIZE, 0, pid) orelse {
+        // Either it has exited since it was found, or this process may
+        // not end it. `findRunning` could query it, so if that still works
+        // it is running.
+        const still = w32.OpenProcess(w32.PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return true;
+        _ = w32.CloseHandle(still);
+        return false;
+    };
+    defer _ = w32.CloseHandle(process);
+    _ = w32.TerminateProcess(process, 1);
+    return w32.WaitForSingleObject(process, 10_000) == w32.WAIT_OBJECT_0;
 }
 
 fn readManifest(s: State, dir: Io.Dir) ?[]const []const u8 {
@@ -336,9 +434,14 @@ fn removeAfterExit(s: State, self_path: []const u8, dir: []const u8) !void {
         helper_path, dir, @intFromPtr(self_handle),
     });
     const line_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line);
+    // Start the helper in %TEMP%. It would otherwise inherit this
+    // process's working directory, which is the install directory when the
+    // uninstaller is opened from Explorer, and Windows cannot delete a
+    // directory that a process has as its working directory.
+    const temp_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, temp);
     var si: w32.STARTUPINFOW = .{ .cb = @sizeOf(w32.STARTUPINFOW) };
     var pi: w32.PROCESS_INFORMATION = undefined;
-    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, null, &si, &pi) == 0) {
+    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, temp_w.ptr, &si, &pi) == 0) {
         return error.CreateProcessFailed;
     }
     if (pi.hThread) |h| _ = w32.CloseHandle(h);
@@ -371,7 +474,19 @@ fn cleanup(s: State, dir: []const u8, wait_handle: ?usize, self_path: []const u8
         };
         break;
     }
-    Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
+    // The same goes for the directory, which Explorer or a scanner may
+    // still have open. Files the user added keep it, as they should.
+    attempt = 0;
+    while (attempt < 50) : (attempt += 1) {
+        Io.Dir.deleteDirAbsolute(s.io, dir) catch |err| switch (err) {
+            error.FileNotFound, error.DirNotEmpty => break,
+            else => {
+                w32.Sleep(100);
+                continue;
+            },
+        };
+        break;
+    }
 
     if (std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, self_path)) |self_w| {
         _ = w32.MoveFileExW(self_w.ptr, null, w32.MOVEFILE_DELAY_UNTIL_REBOOT);

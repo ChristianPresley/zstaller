@@ -187,7 +187,60 @@ pub fn manifestPaths(gpa: Allocator, text: []const u8) Allocator.Error![][]const
     return list.toOwnedSlice(gpa);
 }
 
+/// Returns true when `path` is `dir` itself or a file or directory below
+/// it. Case-insensitive; accepts '\' and '/' separators.
+pub fn isInsideDir(path: []const u8, dir: []const u8) bool {
+    const d = normalizeDir(dir);
+    if (d.len == 0 or path.len < d.len) return false;
+    if (!std.ascii.eqlIgnoreCase(path[0..d.len], d)) return false;
+    if (path.len == d.len) return true;
+    return path[d.len] == '\\' or path[d.len] == '/' or d[d.len - 1] == '\\' or d[d.len - 1] == '/';
+}
+
+/// A program running from the install directory.
+pub const RunningProcess = struct {
+    pid: u32,
+    /// File name of the program, e.g. `app.exe`.
+    name: []const u8,
+};
+
+/// File name of `image_path`, a full Windows path.
+pub fn processName(image_path: []const u8) []const u8 {
+    return basenameWindows(image_path);
+}
+
+/// One line per process: `  app.exe (process ID 1234)`.
+pub fn processList(gpa: Allocator, procs: []const RunningProcess) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for (procs, 0..) |p, i| {
+        if (i > 0) try out.append(gpa, '\n');
+        try out.print(gpa, "  {s} (process ID {d})", .{ p.name, p.pid });
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 const testing = std.testing;
+
+test "isInsideDir" {
+    try testing.expect(isInsideDir("C:\\Program Files\\App\\app.exe", "C:\\Program Files\\App"));
+    try testing.expect(isInsideDir("c:\\program files\\app\\bin\\tool.exe", "C:\\Program Files\\App\\"));
+    try testing.expect(isInsideDir("C:\\Program Files\\App", "C:\\Program Files\\App"));
+    try testing.expect(!isInsideDir("C:\\Program Files\\AppTools\\app.exe", "C:\\Program Files\\App"));
+    try testing.expect(!isInsideDir("C:\\Windows\\explorer.exe", "C:\\Program Files\\App"));
+    try testing.expect(isInsideDir("C:\\x.exe", "C:\\"));
+}
+
+test "processList" {
+    const gpa = testing.allocator;
+    try testing.expectEqualStrings("app.exe", processName("C:\\Program Files\\App\\app.exe"));
+    const text = try processList(gpa, &.{
+        .{ .pid = 1234, .name = "app.exe" },
+        .{ .pid = 99, .name = "helper.exe" },
+    });
+    defer gpa.free(text);
+    try testing.expectEqualStrings("  app.exe (process ID 1234)\n  helper.exe (process ID 99)", text);
+}
 
 test "parse options" {
     const c = try parse(&.{ "/S", "/D=C:\\Apps\\My App", "/NOPATH" });
