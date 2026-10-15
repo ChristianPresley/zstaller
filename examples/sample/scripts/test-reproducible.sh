@@ -24,7 +24,8 @@ build() { # <copy dir>
   (cd "$repo" && git ls-files -z --cached --others --exclude-standard | tar --null -cf - -T -) | tar -xf - -C "$1"
   (cd "$1/examples/sample" &&
     zig build installer --cache-dir "$1-cache" --global-cache-dir "$1-global-cache")
-  (cd "$1/examples/sample/zig-out/installers" && sha256sum -- *.msi *.exe *.deb) >"$1.sums"
+  # --binary: the same "<sum> *<name>" lines on Linux and Windows.
+  (cd "$1/examples/sample/zig-out/installers" && sha256sum --binary -- *.msi *.exe *.deb) >"$1.sums"
 }
 
 echo "== build in two directories"
