@@ -176,6 +176,14 @@ pub const Context = struct {
     }
 };
 
+/// Zig 0.16 programs built for aarch64 Windows with debug info stripped
+/// (`-fstrip`, or ReleaseSmall's default) crash with an access violation
+/// at startup once they use `std.process.Init`. Keeping the symbols avoids
+/// it, so zstaller does that for the application and the installer stub.
+pub fn needsSymbols(target: std.Target) bool {
+    return target.os.tag == .windows and target.cpu.arch == .aarch64;
+}
+
 pub fn createZstallerModule(zb: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Build.Module {
     const manifest = @import("../../build.zig.zon");
     const options = zb.addOptions();
@@ -225,6 +233,7 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
     for (opts.targets) |t| {
         const resolved = b.resolveTargetQuery(t.query());
         const binary = opts.executable(b, resolved, opts.optimize);
+        if (needsSymbols(resolved.result)) binary.root_module.strip = false;
         const ctx: Context = .{
             .b = b,
             .zb = zb,

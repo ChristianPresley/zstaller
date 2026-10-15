@@ -99,6 +99,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         .root_source_file = ctx.zb.path("src/platforms/windows/exe/stub/main.zig"),
         .target = ctx.resolved_target,
         .optimize = .ReleaseSmall,
+        .strip = if (api.needsSymbols(ctx.resolved_target.result)) false else null,
         .imports = &.{
             .{ .name = "zstaller", .module = ctx.zstallerModule(ctx.resolved_target, .ReleaseSmall) },
             .{ .name = "config", .module = config.createModule() },
