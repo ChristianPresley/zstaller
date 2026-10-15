@@ -56,24 +56,6 @@ jobs:
       - name: Build installers, verify and install the .deb
         run: examples/sample/scripts/test-linux.sh
 
-      - name: DIAG build aarch64-windows hellos
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir diag && cd diag
-          for f in hello_init samplecopy; do
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O ReleaseSmall -fno-strip --name $f-small-nostrip
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O ReleaseSafe -fstrip -funwind-tables --name $f-safe-strip-unwind
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O ReleaseSafe -fstrip -fno-unwind-tables --name $f-safe-strip-nounwind
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O ReleaseSafe -fno-strip -fno-unwind-tables --name $f-safe-nostrip-nounwind
-          done
-          ls
-
-      - uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-latest'
-        with:
-          name: diag
-          path: diag/*.exe
-
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest'
         with:
@@ -117,24 +99,6 @@ jobs:
         with:
           name: sample-installers
           path: installers
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: diag
-          path: diag
-
-      - name: DIAG run hellos
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Get-ComputerInfo -Property OsName,OsVersion,OsArchitecture | Out-String
-          foreach ($e in Get-ChildItem diag/*.exe) {
-            $out = & $e.FullName 2>&1 | Out-String
-            Write-Host ("{0}: exit 0x{1:X8} output: {2}" -f $e.Name, $LASTEXITCODE, $out.Trim())
-          }
-          $p = Start-Process installers/sample-1.0.0-windows-aarch64-setup.exe -ArgumentList '/S /D=C:\diagtest' -Wait -PassThru
-          Write-Host ("setup.exe aarch64: exit 0x{0:X8}" -f $p.ExitCode)
-          Get-ChildItem C:\diagtest -ErrorAction SilentlyContinue | Out-String
 
       - name: Silent MSI and EXE install/uninstall
         shell: pwsh

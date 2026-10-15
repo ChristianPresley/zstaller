@@ -84,8 +84,11 @@ Assert-Removed
 Write-Host '== MSI: silent install with ADDTOPATH=0, uninstall by product code'
 Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0"
 Assert-Installed $false
+# Only the MSI registers under its {ProductCode}; an EXE install uses a
+# named key, and passing that to msiexec opens its usage dialog.
 $code = (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
-    Where-Object { $_.DisplayName -eq 'Zstaller Sample' }).PSChildName
+    Where-Object { $_.DisplayName -eq 'Zstaller Sample' -and $_.PSChildName -like '{*}' }).PSChildName
+if (@($code).Count -ne 1) { throw "expected one MSI product code, found: $code" }
 Invoke-Checked msiexec.exe "/x $code /qn"
 Assert-Removed
 
