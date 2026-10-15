@@ -23,17 +23,44 @@ const Allocator = std.mem.Allocator;
 
 pub const PathMode = enum { never, optional, always };
 
+/// File name of the uninstaller the installer copies into the install
+/// directory.
+pub const uninstaller_name = "uninstall.exe";
+
 pub const Command = struct {
-    action: Action = .install,
+    /// Explicit action; null means "decide from the executable's name"
+    /// (see `defaultAction`).
+    action: ?Action = null,
     silent: bool = false,
     /// Install directory override (`/D=<dir>`).
     install_dir: ?[]const u8 = null,
     /// Explicit PATH choice (`/PATH` or `/NOPATH`); null means "use the
     /// default for this installer".
     add_to_path: ?bool = null,
+    /// Internal (`/_cleanup=<dir>`): run as the temporary helper that
+    /// removes the uninstaller and the install directory once the
+    /// uninstaller has exited.
+    cleanup_dir: ?[]const u8 = null,
+    /// Internal (`/_wait=<handle>`): inherited process handle of the
+    /// uninstaller the cleanup helper waits for.
+    wait_handle: ?usize = null,
 
-    pub const Action = enum { install, uninstall, help };
+    pub const Action = enum { install, uninstall, help, cleanup };
 };
+
+/// The action when none is given on the command line. The installer and
+/// the uninstaller are the same program, so the uninstaller is recognized
+/// by the name it is installed under: run directly (or double-clicked) it
+/// must uninstall, not install again.
+pub fn defaultAction(exe_path: []const u8) Command.Action {
+    const base = basenameWindows(exe_path);
+    return if (std.ascii.eqlIgnoreCase(base, uninstaller_name)) .uninstall else .install;
+}
+
+fn basenameWindows(path: []const u8) []const u8 {
+    const start = if (std.mem.lastIndexOfAny(u8, path, "\\/")) |i| i + 1 else 0;
+    return path[start..];
+}
 
 pub const ParseError = error{UnknownOption};
 
@@ -44,8 +71,12 @@ pub const ParseError = error{UnknownOption};
 ///   /D=<dir>     install directory
 ///   /PATH        add the install directory to the system PATH
 ///   /NOPATH      do not add it
-///   /uninstall   remove the installed application
+///   /uninstall   remove the installed application (the default when the
+///                program is run as uninstall.exe)
 ///   /?           show help
+///
+/// `/_cleanup=<dir>` and `/_wait=<handle>` are internal: the uninstaller
+/// passes them to the temporary helper that deletes it after it exits.
 pub fn parse(args: []const []const u8) ParseError!Command {
     var cmd: Command = .{};
     for (args) |raw| {
@@ -63,6 +94,11 @@ pub fn parse(args: []const []const u8) ParseError!Command {
             cmd.action = .uninstall;
         } else if (eqlIgnoreCase(a, "?") or eqlIgnoreCase(a, "h") or eqlIgnoreCase(a, "help")) {
             cmd.action = .help;
+        } else if (startsWithIgnoreCase(a, "_cleanup=") and a.len > "_cleanup=".len) {
+            cmd.action = .cleanup;
+            cmd.cleanup_dir = a["_cleanup=".len..];
+        } else if (startsWithIgnoreCase(a, "_wait=")) {
+            cmd.wait_handle = std.fmt.parseInt(usize, a["_wait=".len..], 10) catch return error.UnknownOption;
         } else {
             return error.UnknownOption;
         }
@@ -76,13 +112,17 @@ pub const help_text =
     \\  /D=<dir>    Install directory
     \\  /PATH       Add the install directory to the system PATH
     \\  /NOPATH     Do not add the install directory to PATH
-    \\  /uninstall  Remove the application
+    \\  /uninstall  Remove the application (the default for uninstall.exe)
     \\
     \\Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments
 ;
 
 fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(a, b);
+}
+
+fn startsWithIgnoreCase(a: []const u8, prefix: []const u8) bool {
+    return a.len >= prefix.len and std.ascii.eqlIgnoreCase(a[0..prefix.len], prefix);
 }
 
 /// Normalizes a directory for comparison: trims surrounding whitespace,
@@ -154,7 +194,7 @@ test "parse options" {
     try testing.expect(c.silent);
     try testing.expectEqualStrings("C:\\Apps\\My App", c.install_dir.?);
     try testing.expectEqual(false, c.add_to_path.?);
-    try testing.expectEqual(Command.Action.install, c.action);
+    try testing.expectEqual(@as(?Command.Action, null), c.action);
 
     const u = try parse(&.{ "-uninstall", "/s" });
     try testing.expectEqual(Command.Action.uninstall, u.action);
@@ -164,6 +204,21 @@ test "parse options" {
     try testing.expectEqual(true, (try parse(&.{"/path"})).add_to_path.?);
     try testing.expectError(error.UnknownOption, parse(&.{"/bogus"}));
     try testing.expectError(error.UnknownOption, parse(&.{"stray"}));
+
+    const h = try parse(&.{ "/_cleanup=C:\\Program Files\\App", "/_wait=1234" });
+    try testing.expectEqual(Command.Action.cleanup, h.action.?);
+    try testing.expectEqualStrings("C:\\Program Files\\App", h.cleanup_dir.?);
+    try testing.expectEqual(@as(usize, 1234), h.wait_handle.?);
+    try testing.expectError(error.UnknownOption, parse(&.{"/_wait=x"}));
+    try testing.expectError(error.UnknownOption, parse(&.{"/_cleanup="}));
+}
+
+test "uninstall.exe uninstalls by default" {
+    try testing.expectEqual(Command.Action.uninstall, defaultAction("C:\\Program Files\\App\\uninstall.exe"));
+    try testing.expectEqual(Command.Action.uninstall, defaultAction("C:\\Program Files\\App\\UNINSTALL.EXE"));
+    try testing.expectEqual(Command.Action.uninstall, defaultAction("uninstall.exe"));
+    try testing.expectEqual(Command.Action.install, defaultAction("C:\\Users\\me\\Downloads\\app-1.0.0-windows-x86_64-setup.exe"));
+    try testing.expectEqual(Command.Action.install, defaultAction("C:\\uninstall.exe\\setup.exe"));
 }
 
 test "path append and remove" {

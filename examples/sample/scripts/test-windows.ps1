@@ -3,7 +3,9 @@
 #
 # End-to-end test on Windows: build every installer, verify checksums, then
 # exercise the MSI (silent install/uninstall with msiexec, with and without
-# ADDTOPATH) and the EXE installer (silent install, silent uninstall).
+# ADDTOPATH) and the EXE installer (silent install, then silent uninstall by
+# running uninstall.exe directly, through the registered uninstall command
+# and through the setup program).
 # Must run elevated, as GitHub-hosted Windows runners do.
 #
 # -InstallerDir tests already-built installers (for example the ones a
@@ -92,15 +94,39 @@ if (@($code).Count -ne 1) { throw "expected one MSI product code, found: $code" 
 Invoke-Checked msiexec.exe "/x $code /qn"
 Assert-Removed
 
+$key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample'
+$uninstaller = Join-Path $dir 'uninstall.exe'
+
+function Assert-ExeRemoved {
+    Assert-Removed
+    if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
+}
+
 Write-Host '== EXE: silent install with /PATH'
 Invoke-Checked $exe '/S /PATH'
 Assert-Installed $true
-$key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample'
 $entry = Get-ItemProperty $key
 if ($entry.DisplayVersion -ne '1.0.0') { throw 'EXE uninstall entry missing' }
-Write-Host '== EXE: silent uninstall'
-Invoke-Checked (Join-Path $dir 'uninstall.exe') '/uninstall /S'
-Assert-Removed
-if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
+if (-not (Test-Path $uninstaller)) { throw "$uninstaller was not installed" }
+# Run the uninstaller directly with no action, as a double-click does: it
+# must uninstall, not reinstall, and remove itself and the directory.
+Write-Host '== EXE: uninstall.exe /S (no /uninstall)'
+Invoke-Checked $uninstaller '/S'
+Assert-ExeRemoved
+
+Write-Host '== EXE: uninstall with the registered QuietUninstallString'
+Invoke-Checked $exe '/S'
+Assert-Installed $false
+$quiet = (Get-ItemProperty $key).QuietUninstallString
+Invoke-Checked cmd.exe "/d /s /c `"$quiet`""
+Assert-ExeRemoved
+
+Write-Host '== EXE: setup.exe /uninstall /S finds the installation in the registry'
+Invoke-Checked $exe '/S'
+Assert-Installed $false
+Invoke-Checked $exe '/uninstall /S'
+Assert-ExeRemoved
+$p = Start-Process -FilePath $exe -ArgumentList '/uninstall /S' -Wait -PassThru
+if ($p.ExitCode -ne 1) { throw "uninstalling when not installed exited with $($p.ExitCode), expected 1" }
 
 Write-Host 'Windows end-to-end test passed'
