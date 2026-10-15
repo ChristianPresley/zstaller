@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in zstaller does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal build.zig / build.zig.zon and the command you ran.
+    validations:
+      required: true
+  - type: input
+    id: zig-version
+    attributes:
+      label: Zig version
+      description: Output of `zig version`.
+    validations:
+      required: true
+  - type: input
+    id: zstaller-version
+    attributes:
+      label: zstaller version or commit
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host OS and architecture
+      placeholder: e.g. Ubuntu 24.04 x86_64, Windows 11 ARM64
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      render: text
