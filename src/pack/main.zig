@@ -22,6 +22,7 @@
 //!   checksum     <input> <output> <file-name>
 //!   deb          --out <path> --mtime <secs> [package options] (--file <src> <dest> <mode>)...
 //!   payload      --out <path> (--file <src> <dest>)...
+//!   wizard       --out <path> [--banner <img>] [--welcome <img>] [--license <txt>]
 //!   msi          --out <path> --mtime <secs> [package options] (--file <src> <dest>)...
 //!   pe-normalize <input> <output>
 //!
@@ -47,6 +48,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdDeb(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "payload")) {
         try cmdPayload(ctx, rest);
+    } else if (std.mem.eql(u8, cmd, "wizard")) {
+        try cmdWizard(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "msi")) {
         try cmdMsi(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "pe-normalize")) {
@@ -191,11 +194,48 @@ fn cmdPayload(ctx: Ctx, args: []const []const u8) !void {
     ctx.writeFile(o.required("out"), bytes);
 }
 
+fn cmdWizard(ctx: Ctx, args: []const []const u8) !void {
+    const assets = zstaller.wizard_assets;
+    const o = Options.parse(ctx.arena, args, 0, &.{ "out", "banner", "welcome", "license", "banner-option", "welcome-option" });
+    var entries: std.ArrayList(zstaller.exe_payload.Entry) = .empty;
+    inline for (.{ assets.Kind.banner, assets.Kind.welcome }) |kind| {
+        if (o.get(@tagName(kind))) |path| {
+            const option = o.get(@tagName(kind) ++ "-option") orelse @tagName(kind);
+            const size = kind.size();
+            const data = assets.encodeImage(ctx.arena, kind, ctx.readFile(path)) catch |err| switch (err) {
+                error.WrongSize => {
+                    const img = zstaller.image.decode(ctx.arena, ctx.readFile(path)) catch unreachable;
+                    fail("{s} must be {d}x{d} pixels, or {d}x{d} for high-DPI displays, but '{s}' is {d}x{d}", .{
+                        option, size[0], size[1], size[0] * 2, size[1] * 2, path, img.width, img.height,
+                    });
+                },
+                error.UnknownFormat => fail("{s}: '{s}' is not a PNG or BMP file", .{ option, path }),
+                error.InterlacedPng => fail("{s}: '{s}' is an interlaced PNG; save it without interlacing", .{ option, path }),
+                error.UnsupportedImage => fail("{s}: '{s}' uses an unsupported BMP or PNG variant; save it as a standard 24- or 32-bit PNG or BMP", .{ option, path }),
+                error.TooLarge => fail("{s}: '{s}' is too large", .{ option, path }),
+                error.InvalidImage => fail("{s}: '{s}' is not a valid image file", .{ option, path }),
+                error.OutOfMemory => oom(),
+            };
+            entries.append(ctx.arena, .{ .path = kind.entryName(), .data = data }) catch oom();
+        }
+    }
+    if (o.get("license")) |path| {
+        const text = ctx.readFile(path);
+        if (!std.unicode.utf8ValidateSlice(text)) fail("license_file: '{s}' is not UTF-8 text", .{path});
+        // Drop a UTF-8 byte order mark.
+        const body = if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text[3..] else text;
+        entries.append(ctx.arena, .{ .path = assets.license_entry, .data = body }) catch oom();
+    }
+    const bytes = zstaller.exe_payload.encode(ctx.gpa, entries.items) catch |err| fail("cannot build wizard assets: {t}", .{err});
+    defer ctx.gpa.free(bytes);
+    ctx.writeFile(o.required("out"), bytes);
+}
+
 fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const msi = zstaller.msi.package;
     const o = Options.parse(ctx.arena, args, 2, &.{
-        "out",           "mtime",           "name", "version", "manufacturer", "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
-        "shortcut-name", "shortcut-target",
+        "out",           "mtime",           "name",         "version",    "manufacturer",     "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
+        "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut",
     });
     var files: std.ArrayList(msi.File) = .empty;
     for (o.files.items) |f| {
@@ -213,14 +253,27 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         .upgrade_code = o.required("upgrade-code"),
         .platform = msi.Platform.parse(platform_arg) orelse fail("unknown platform '{s}'", .{platform_arg}),
         .install_dir = o.required("install-dir"),
+        .install_root = blk: {
+            const r = o.get("install-root") orelse "program_files";
+            break :blk std.meta.stringToEnum(msi.InstallRoot, r) orelse fail("invalid --install-root '{s}'", .{r});
+        },
         .add_to_path = std.meta.stringToEnum(msi.PathMode, path_arg) orelse fail("invalid --add-to-path '{s}'", .{path_arg}),
         .icon = if (o.get("icon")) |path| ctx.readFile(path) else null,
-        .shortcut = if (o.get("shortcut-name")) |name| .{ .name = name, .target = o.required("shortcut-target") } else null,
+        .shortcut = if (o.get("shortcut-name")) |name| .{
+            .name = name,
+            .target = o.required("shortcut-target"),
+            .start_menu = !std.mem.eql(u8, o.get("start-menu") orelse "1", "0"),
+            .desktop = blk: {
+                const d = o.get("desktop-shortcut") orelse "never";
+                break :blk std.meta.stringToEnum(msi.DesktopMode, d) orelse fail("invalid --desktop-shortcut '{s}'", .{d});
+            },
+        } else null,
         .files = files.items,
         .timestamp = o.mtime(),
     }) catch |err| switch (err) {
         error.NotRepresentable => fail("MSI strings must use characters from Windows-1252", .{}),
-        error.InvalidShortcut => fail("the Start Menu shortcut name is invalid or its target is not an installed file", .{}),
+        error.InvalidShortcut => fail("the shortcut name is invalid or its target is not an installed file", .{}),
+        error.InvalidPath => fail("an install path or install_dir_name contains characters Windows does not allow", .{}),
         else => |e| fail("cannot build MSI: {t}", .{e}),
     };
     ctx.writeFile(o.required("out"), out.written());

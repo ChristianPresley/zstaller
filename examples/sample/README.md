@@ -9,6 +9,12 @@ zig build run        # build and run natively
 zig build installer  # build every installer into zig-out/installers/
 ```
 
+The EXE installer shows a setup wizard with the sample's own artwork
+([`assets/wizard-welcome.png`](assets/wizard-welcome.png) and
+[`assets/wizard-banner.png`](assets/wizard-banner.png), double size) and
+its [`LICENSE`](LICENSE) on a License page. Replace them, or remove the
+`.wizard` options to see zstaller's built-in artwork.
+
 On Windows the installers add a **Zstaller Sample** Start Menu shortcut;
 uninstall from Settings > Apps > Installed apps. On Ubuntu run `sample`
 after installing the `.deb`, and `sudo apt remove sample` to remove it.

@@ -37,6 +37,7 @@ $exe = (Resolve-Path "sample-1.0.0-windows-$arch-setup.exe").Path
 $dir = Join-Path $env:ProgramFiles 'Zstaller Sample'
 $app = Join-Path $dir 'sample.exe'
 $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Zstaller Sample.lnk'
+$desktop = Join-Path $env:PUBLIC 'Desktop\Zstaller Sample.lnk'
 
 function Invoke-Checked($file, $arguments) {
     $p = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru
@@ -46,6 +47,15 @@ function Invoke-Checked($file, $arguments) {
 function Test-OnPath {
     $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     return ($path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -contains $dir
+}
+
+function Assert-Desktop($expected) {
+    if ((Test-Path $desktop) -ne $expected) { throw "desktop shortcut present: $(Test-Path $desktop), expected $expected" }
+    if ($expected) {
+        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($desktop)
+        if ($link.TargetPath -ne $app) { throw "desktop shortcut points at '$($link.TargetPath)', expected '$app'" }
+        Write-Host "Desktop shortcut OK: $desktop"
+    }
 }
 
 function Assert-Installed($expectOnPath) {
@@ -71,11 +81,13 @@ function Assert-Removed {
     if (Test-Path $dir) { throw "$dir still exists: $(Get-ChildItem $dir -Force | Out-String)" }
     if (Test-OnPath) { throw 'PATH entry was not removed' }
     if (Test-Path $shortcut) { throw 'Start Menu shortcut was not removed' }
+    if (Test-Path $desktop) { throw 'desktop shortcut was not removed' }
 }
 
-Write-Host '== MSI: silent install with PATH'
-Invoke-Checked msiexec.exe "/i `"$msi`" /qn /l*v `"$PWD\msi-install.log`""
+Write-Host '== MSI: silent install with PATH and a desktop shortcut'
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn DESKTOPSHORTCUT=1 /l*v `"$PWD\msi-install.log`""
 Assert-Installed $true
+Assert-Desktop $true
 $product = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
     Where-Object { $_.DisplayName -eq 'Zstaller Sample' }
 if (-not $product) { throw 'MSI product is not registered in Apps & Features' }
@@ -86,6 +98,7 @@ Assert-Removed
 Write-Host '== MSI: silent install with ADDTOPATH=0, uninstall by product code'
 Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0"
 Assert-Installed $false
+Assert-Desktop $false
 # Only the MSI registers under its {ProductCode}; an EXE install uses a
 # named key, and passing that to msiexec opens its usage dialog.
 $code = (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
@@ -102,9 +115,10 @@ function Assert-ExeRemoved {
     if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
 }
 
-Write-Host '== EXE: silent install with /PATH'
-Invoke-Checked $exe '/S /PATH'
+Write-Host '== EXE: silent install with /PATH and /DESKTOP'
+Invoke-Checked $exe '/S /PATH /DESKTOP'
 Assert-Installed $true
+Assert-Desktop $true
 $entry = Get-ItemProperty $key
 if ($entry.DisplayVersion -ne '1.0.0') { throw 'EXE uninstall entry missing' }
 if (-not (Test-Path $uninstaller)) { throw "$uninstaller was not installed" }
@@ -117,6 +131,7 @@ Assert-ExeRemoved
 Write-Host '== EXE: uninstall with the registered QuietUninstallString'
 Invoke-Checked $exe '/S'
 Assert-Installed $false
+Assert-Desktop $false
 $quiet = (Get-ItemProperty $key).QuietUninstallString
 Invoke-Checked cmd.exe "/d /s /c `"$quiet`""
 Assert-ExeRemoved
@@ -128,5 +143,15 @@ Invoke-Checked $exe '/uninstall /S'
 Assert-ExeRemoved
 $p = Start-Process -FilePath $exe -ArgumentList '/uninstall /S' -Wait -PassThru
 if ($p.ExitCode -ne 1) { throw "uninstalling when not installed exited with $($p.ExitCode), expected 1" }
+
+Write-Host '== EXE: silent install to another folder with /D='
+$custom = Join-Path $env:SystemDrive 'zstaller test\Sample App'
+Invoke-Checked $exe "/S `"/D=$custom`""
+if (-not (Test-Path (Join-Path $custom 'sample.exe'))) { throw "sample.exe was not installed in $custom" }
+if ((Get-ItemProperty $key).InstallLocation -ne $custom) { throw 'InstallLocation does not name the chosen folder' }
+Invoke-Checked $exe '/uninstall /S'
+for ($i = 0; $i -lt 20 -and (Test-Path $custom); $i++) { Start-Sleep -Milliseconds 500 }
+if (Test-Path $custom) { throw "$custom still exists" }
+if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
 
 Write-Host 'Windows end-to-end test passed'

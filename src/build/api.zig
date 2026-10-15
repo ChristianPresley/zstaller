@@ -48,14 +48,75 @@ pub const PathMode = enum {
     always,
 };
 
+/// Where the default install directory is created. Users can still pick
+/// another folder in the EXE wizard (unless
+/// `allow_install_dir_change = false`), with `/D=<dir>`, or with the MSI's
+/// `INSTALLDIR` property.
+pub const InstallRoot = enum {
+    /// `C:\Program Files` (the native one on ARM64 and x64).
+    program_files,
+    /// `C:\ProgramData`.
+    program_data,
+    /// The root of the Windows drive, `C:\`.
+    system_drive,
+};
+
+/// Whether the installers create a desktop shortcut.
+pub const DesktopShortcut = enum {
+    never,
+    /// The EXE wizard offers an unticked checkbox (`/DESKTOP` for silent
+    /// installs); the MSI exposes a `DESKTOPSHORTCUT` property that
+    /// defaults to 0.
+    optional,
+    always,
+};
+
+/// The look and text of the EXE installer's wizard.
+///
+/// Images may be PNG or BMP. They use the sizes of the Windows Installer
+/// banner and dialog bitmaps, at 100% display scaling, or exactly twice
+/// that for sharp output on high-DPI displays; any other size fails the
+/// build. Transparent areas show white. Without images, the wizard draws
+/// its own artwork from `accent_color` and the application icon.
+pub const WizardOptions = struct {
+    /// Header of the inner pages: 493x58 (or 986x116). The page title and
+    /// subtitle are drawn in dark text over its left part, so keep about
+    /// the left two-thirds light and put artwork on the right.
+    banner_image: ?LazyPath = null,
+    /// Background of the Welcome and Finish pages: 493x312 (or 986x624).
+    /// Artwork goes in the left 164 pixels (328 at double size); the
+    /// heading and text are drawn in dark text over the rest, so keep it
+    /// light.
+    welcome_image: ?LazyPath = null,
+    /// UTF-8 text shown on a License page that the user must accept
+    /// before installing. No License page without it.
+    license_file: ?LazyPath = null,
+    /// Accent color as 0xRRGGBB, used by the built-in artwork.
+    accent_color: u24 = 0x0067C0,
+    /// Text of the Welcome page. Defaults to a sentence naming the product
+    /// and version.
+    welcome_text: ?[]const u8 = null,
+    /// Text of the Finish page after a successful install.
+    finish_text: ?[]const u8 = null,
+    /// Offer a "Launch <product>" checkbox, ticked, on the Finish page.
+    launch_on_finish: bool = true,
+};
+
 pub const WindowsOptions = struct {
     /// Publisher shown in Apps & Features, and the MSI Manufacturer.
     /// Defaults to the package name.
     publisher: ?[]const u8 = null,
     /// Product name shown to users. Defaults to the package name.
     display_name: ?[]const u8 = null,
-    /// Directory created under Program Files. Defaults to `display_name`.
+    /// Directory created in `install_root`. Defaults to `display_name`.
+    /// May contain backslashes for nested folders, e.g. `"Acme\\Widget"`.
     install_dir_name: ?[]const u8 = null,
+    /// Folder the default install directory is created in.
+    install_root: InstallRoot = .program_files,
+    /// Let the user choose another install directory in the EXE wizard.
+    /// When false the wizard shows the directory but cannot change it
+    /// (`/D=<dir>` still works for scripted installs).
+    allow_install_dir_change: bool = true,
     /// MSI UpgradeCode GUID. Keep it constant for the life of the product
     /// so new versions upgrade old ones. Defaults to a GUID derived from
     /// the package name.
@@ -64,6 +125,8 @@ pub const WindowsOptions = struct {
     /// Add a Start Menu shortcut, named after `display_name`, that opens
     /// the application. Both installers remove it on uninstall.
     start_menu_shortcut: bool = true,
+    /// Desktop shortcut for all users, named after `display_name`.
+    desktop_shortcut: DesktopShortcut = .optional,
     /// What the EXE installer and uninstaller do when programs are still
     /// running from the install directory, whose files Windows cannot
     /// replace or delete. When false, they stop before changing anything
@@ -72,6 +135,8 @@ pub const WindowsOptions = struct {
     /// silent (`/S`) run force-quits them without asking. The MSI is not
     /// affected: Windows Installer handles files in use itself.
     close_running_apps: bool = false,
+    /// The EXE installer's wizard: images, license and text.
+    wizard: WizardOptions = .{},
 };
 
 pub const DebOptions = struct {

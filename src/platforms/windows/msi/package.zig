@@ -17,8 +17,8 @@
 //! Builds a complete per-machine Windows Installer package for an
 //! application: directory tree, one component per file, an embedded
 //! MSZIP cabinet, major-upgrade handling, optional PATH entry and the
-//! standard install/uninstall sequences, plus an optional Start Menu
-//! shortcut. No UI tables are written, so
+//! standard install/uninstall sequences, plus optional Start Menu and
+//! desktop shortcuts. No UI tables are written, so
 //! msiexec shows its basic progress UI, and `/qn` installs silently.
 
 const std = @import("std");
@@ -53,6 +53,26 @@ pub const Platform = enum {
 
 pub const PathMode = enum { never, optional, always };
 
+/// Whether the desktop shortcut is installed: never, when the
+/// `DESKTOPSHORTCUT` property is 1 (default 0), or always.
+pub const DesktopMode = enum { never, optional, always };
+
+/// The folder `install_dir` is created in.
+pub const InstallRoot = enum {
+    program_files,
+    program_data,
+    system_drive,
+
+    /// The Windows Installer folder property for it.
+    pub fn folder(r: InstallRoot) []const u8 {
+        return switch (r) {
+            .program_files => "ProgramFiles64Folder",
+            .program_data => "CommonAppDataFolder",
+            .system_drive => "WindowsVolume",
+        };
+    }
+};
+
 pub const File = struct {
     /// Relative install path using '/' separators.
     path: []const u8,
@@ -60,10 +80,14 @@ pub const File = struct {
 };
 
 pub const Shortcut = struct {
-    /// Shortcut name in the Start Menu, without `.lnk`.
+    /// Shortcut name, without `.lnk`.
     name: []const u8,
     /// Install path of the file it opens; must be one of `files`.
     target: []const u8,
+    /// Add it to the Start Menu for all users.
+    start_menu: bool = true,
+    /// Add it to the desktop for all users.
+    desktop: DesktopMode = .never,
 };
 
 pub const Product = struct {
@@ -75,11 +99,13 @@ pub const Product = struct {
     /// `{GUID}`; stable across versions.
     upgrade_code: []const u8,
     platform: Platform,
-    /// Directory created under Program Files.
+    /// Directory created in `install_root`; nested folders are separated
+    /// by '\\' or '/'.
     install_dir: []const u8,
+    install_root: InstallRoot = .program_files,
     add_to_path: PathMode = .never,
     icon: ?[]const u8 = null,
-    /// Start Menu shortcut for all users, removed on uninstall.
+    /// Shortcuts for all users, removed on uninstall.
     shortcut: ?Shortcut = null,
     files: []const File,
     /// Seconds since the Unix epoch for the summary timestamps.
@@ -89,6 +115,15 @@ pub const Product = struct {
 pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidVersion, NoFiles, TooManyFiles };
 
 const cabinet_name = "product.cab";
+
+const registry_columns = [_]db_mod.Column{
+    .{ .name = "Registry", .type = T.str(72) | T.key },
+    .{ .name = "Root", .type = T.int2 },
+    .{ .name = "Key", .type = T.str(255) | T.localizable },
+    .{ .name = "Name", .type = T.str(255) | T.localizable | T.nullable },
+    .{ .name = "Value", .type = T.str(0) | T.localizable | T.nullable },
+    .{ .name = "Component_", .type = T.str(72) },
+};
 const icon_key = "ProductIcon.ico";
 
 pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
@@ -107,7 +142,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     const product_code = uuid.format(uuid.v5Parts(upgrade, &.{ "product", p.version, platform }));
     const package_code = blk: {
         var h = std.crypto.hash.sha2.Sha256.init(.{});
-        for ([_][]const u8{ p.name, p.version, p.manufacturer, p.description, p.install_dir, @tagName(p.add_to_path), platform }) |s| {
+        for ([_][]const u8{ p.name, p.version, p.manufacturer, p.description, p.install_dir, @tagName(p.install_root), @tagName(p.add_to_path), platform }) |s| {
             h.update(s);
             h.update(&.{0});
         }
@@ -121,6 +156,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(sc.name);
             h.update(&.{0});
             h.update(sc.target);
+            h.update(&.{ @intFromBool(sc.start_menu), @intFromEnum(sc.desktop) });
         }
         var d: [32]u8 = undefined;
         h.final(&d);
@@ -148,10 +184,11 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ "ARPNOMODIFY", "1" },
         .{ "ARPNOREPAIR", "1" },
         .{ "ARPCOMMENTS", p.description },
-        .{ "SecureCustomProperties", "ADDTOPATH;NEWERVERSIONFOUND;OLDERVERSIONFOUND" },
+        .{ "SecureCustomProperties", "ADDTOPATH;DESKTOPSHORTCUT;NEWERVERSIONFOUND;OLDERVERSIONFOUND" },
     };
     for (props) |kv| try db.addRow(property, &.{ .{ .str = kv[0] }, .{ .str = kv[1] } });
     if (p.add_to_path == .optional) try db.addRow(property, &.{ .{ .str = "ADDTOPATH" }, .{ .str = "1" } });
+    if (p.shortcut) |sc| if (sc.desktop == .optional) try db.addRow(property, &.{ .{ .str = "DESKTOPSHORTCUT" }, .{ .str = "0" } });
     if (p.icon != null) try db.addRow(property, &.{ .{ .str = "ARPPRODUCTICON" }, .{ .str = icon_key } });
 
     // ---- Directory tree
@@ -161,14 +198,26 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ .name = "DefaultDir", .type = T.str(255) | T.localizable },
     });
     try db.addRow(directory, &.{ .{ .str = "TARGETDIR" }, .null, .{ .str = "SourceDir" } });
-    try db.addRow(directory, &.{ .{ .str = "ProgramFiles64Folder" }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+    const root = p.install_root.folder();
+    try db.addRow(directory, &.{ .{ .str = root }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
 
+    // `install_dir` may be nested ("Acme\\Widget"): one row per folder,
+    // the last one INSTALLDIR.
     var short_names: ShortNames = .{};
-    try db.addRow(directory, &.{
-        .{ .str = "INSTALLDIR" },
-        .{ .str = "ProgramFiles64Folder" },
-        .{ .str = try short_names.longName(a, "ProgramFiles64Folder", p.install_dir) },
-    });
+    {
+        var segments: std.ArrayList([]const u8) = .empty;
+        var it = std.mem.splitAny(u8, p.install_dir, "\\/");
+        while (it.next()) |seg| {
+            if (!payload.isSafePath(seg)) return error.InvalidPath;
+            try segments.append(a, seg);
+        }
+        var parent: []const u8 = root;
+        for (segments.items, 0..) |seg, i| {
+            const id = if (i + 1 == segments.items.len) "INSTALLDIR" else try std.fmt.allocPrint(a, "INSTALLPARENT{d}", .{i});
+            try db.addRow(directory, &.{ .{ .str = id }, .{ .str = parent }, .{ .str = try short_names.longName(a, parent, seg) } });
+            parent = id;
+        }
+    }
 
     // Subdirectories, keyed by relative path ("" = INSTALLDIR).
     var dir_ids: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -254,11 +303,23 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         };
     }
 
-    // ---- Start Menu shortcut, installed with the file it points at.
+    // ---- Registry: key paths for components that install no file.
+    var registry_table: ?*db_mod.Table = null;
+    const reg_key = try std.fmt.allocPrint(a, "Software\\{s}\\{s}", .{ p.manufacturer, p.name });
+    const registryTable = struct {
+        fn get(d: *Database, t: *?*db_mod.Table) !*db_mod.Table {
+            if (t.*) |existing| return existing;
+            t.* = try d.addTable("Registry", &registry_columns);
+            return t.*.?;
+        }
+    }.get;
+
+    // ---- Shortcuts. The Start Menu one is installed with the file it
+    // points at; the desktop one has its own component so that it can be
+    // optional.
     if (p.shortcut) |sc| {
         const target = shortcut_file orelse return error.InvalidShortcut;
         if (sc.name.len == 0 or std.mem.indexOfAny(u8, sc.name, "\\/:*?\"<>|") != null) return error.InvalidShortcut;
-        try db.addRow(directory, &.{ .{ .str = "ProgramMenuFolder" }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
         const shortcut = try db.addTable("Shortcut", &.{
             .{ .name = "Shortcut", .type = T.str(72) | T.key },
             .{ .name = "Directory_", .type = T.str(72) },
@@ -273,32 +334,51 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "ShowCmd", .type = T.int2 | T.nullable },
             .{ .name = "WkDir", .type = T.str(72) | T.nullable },
         });
-        try db.addRow(shortcut, &.{
-            .{ .str = "SStartMenu" },
-            .{ .str = "ProgramMenuFolder" },
-            .{ .str = try short_names.longName(a, "ProgramMenuFolder", sc.name) },
-            .{ .str = target.component },
-            .{ .str = try std.fmt.allocPrint(a, "[#{s}]", .{target.file}) },
-            .null,
-            .{ .str = p.description },
-            .null,
-            if (p.icon != null) Value{ .str = icon_key } else .null,
-            if (p.icon != null) Value{ .int = 0 } else .null,
-            .null,
-            .{ .str = "INSTALLDIR" },
-        });
+        const Place = struct { key: []const u8, folder: []const u8, component: []const u8 };
+        var places: [2]Place = undefined;
+        var n: usize = 0;
+        if (sc.start_menu) {
+            places[n] = .{ .key = "SStartMenu", .folder = "ProgramMenuFolder", .component = target.component };
+            n += 1;
+        }
+        if (sc.desktop != .never) {
+            const desktop_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", platform, "DesktopShortcut" }));
+            try db.addRow(component, &.{
+                .{ .str = "CDesktop" },
+                .{ .str = try a.dupe(u8, &desktop_guid) },
+                .{ .str = "INSTALLDIR" },
+                .{ .int = component_64bit | component_registry_keypath },
+                if (sc.desktop == .optional) Value{ .str = "DESKTOPSHORTCUT=1" } else .null,
+                .{ .str = "RDesktop" },
+            });
+            const registry = try registryTable(&db, &registry_table);
+            try db.addRow(registry, &.{ .{ .str = "RDesktop" }, .{ .int = 2 }, .{ .str = reg_key }, .{ .str = "DesktopShortcut" }, .{ .str = "1" }, .{ .str = "CDesktop" } });
+            try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = "CDesktop" } });
+            places[n] = .{ .key = "SDesktop", .folder = "DesktopFolder", .component = "CDesktop" };
+            n += 1;
+        }
+        for (places[0..n]) |place| {
+            try db.addRow(directory, &.{ .{ .str = place.folder }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+            try db.addRow(shortcut, &.{
+                .{ .str = place.key },
+                .{ .str = place.folder },
+                .{ .str = try short_names.longName(a, place.folder, sc.name) },
+                .{ .str = place.component },
+                .{ .str = try std.fmt.allocPrint(a, "[#{s}]", .{target.file}) },
+                .null,
+                .{ .str = p.description },
+                .null,
+                if (p.icon != null) Value{ .str = icon_key } else .null,
+                if (p.icon != null) Value{ .int = 0 } else .null,
+                .null,
+                .{ .str = "INSTALLDIR" },
+            });
+        }
     }
 
     // ---- PATH
     if (p.add_to_path != .never) {
-        const registry = try db.addTable("Registry", &.{
-            .{ .name = "Registry", .type = T.str(72) | T.key },
-            .{ .name = "Root", .type = T.int2 },
-            .{ .name = "Key", .type = T.str(255) | T.localizable },
-            .{ .name = "Name", .type = T.str(255) | T.localizable | T.nullable },
-            .{ .name = "Value", .type = T.str(0) | T.localizable | T.nullable },
-            .{ .name = "Component_", .type = T.str(72) },
-        });
+        const registry = try registryTable(&db, &registry_table);
         const environment = try db.addTable("Environment", &.{
             .{ .name = "Environment", .type = T.str(72) | T.key },
             .{ .name = "Name", .type = T.str(255) | T.localizable },
@@ -314,7 +394,6 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             if (p.add_to_path == .optional) Value{ .str = "ADDTOPATH=1" } else .null,
             .{ .str = "RPath" },
         });
-        const reg_key = try std.fmt.allocPrint(a, "Software\\{s}\\{s}", .{ p.manufacturer, p.name });
         try db.addRow(registry, &.{ .{ .str = "RPath" }, .{ .int = 2 }, .{ .str = reg_key }, .{ .str = "AddedToPath" }, .{ .str = "1" }, .{ .str = "CPath" } });
         try db.addRow(environment, &.{ .{ .str = "EPath" }, .{ .str = "=-*Path" }, .{ .str = "[~];[INSTALLDIR]" }, .{ .str = "CPath" } });
         try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = "CPath" } });
@@ -604,10 +683,11 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
         .description = "A demo",
         .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
         .platform = .arm64,
-        .install_dir = "Demo",
+        .install_dir = "Acme\\Demo",
+        .install_root = .program_data,
         .add_to_path = .always,
         .icon = "ICON",
-        .shortcut = .{ .name = "Demo App", .target = "demo.exe" },
+        .shortcut = .{ .name = "Demo App", .target = "demo.exe", .desktop = .optional },
         .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
     });
     try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
@@ -630,6 +710,19 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
     defer gpa.free(shortcuts.stdout);
     defer gpa.free(shortcuts.stderr);
     try testing.expect(std.mem.indexOf(u8, shortcuts.stdout, "SStartMenu\tProgramMenuFolder\tDEMOAP~1|Demo App\tC1\t[#F1]") != null);
+    try testing.expect(std.mem.indexOf(u8, shortcuts.stdout, "SDesktop\tDesktopFolder\tDEMOAP~1|Demo App\tCDesktop\t[#F1]") != null);
+    try testing.expect(std.mem.indexOf(u8, result.stdout, "DESKTOPSHORTCUT\t0") != null);
+
+    const dirs = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "Directory" } });
+    defer gpa.free(dirs.stdout);
+    defer gpa.free(dirs.stderr);
+    try testing.expect(std.mem.indexOf(u8, dirs.stdout, "INSTALLPARENT0\tCommonAppDataFolder\tAcme") != null);
+    try testing.expect(std.mem.indexOf(u8, dirs.stdout, "INSTALLDIR\tINSTALLPARENT0\tDemo") != null);
+
+    const comps = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "Component" } });
+    defer gpa.free(comps.stdout);
+    defer gpa.free(comps.stderr);
+    try testing.expect(std.mem.indexOf(u8, comps.stdout, "DESKTOPSHORTCUT=1\tRDesktop") != null);
 }
 
 test "shortcut must point at an installed file" {
@@ -650,4 +743,7 @@ test "shortcut must point at an installed file" {
     try testing.expectError(error.InvalidShortcut, write(gpa, &out.writer, product));
     product.shortcut = .{ .name = "a/b", .target = "d.exe" };
     try testing.expectError(error.InvalidShortcut, write(gpa, &out.writer, product));
+    product.shortcut = null;
+    product.install_dir = "A\\..\\B";
+    try testing.expectError(error.InvalidPath, write(gpa, &out.writer, product));
 }
