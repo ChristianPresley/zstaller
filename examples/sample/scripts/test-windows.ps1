@@ -50,6 +50,7 @@ function Assert-Installed($expectOnPath) {
     if (-not (Test-Path $app)) { throw "$app was not installed" }
     if (-not (Test-Path (Join-Path $dir 'README.md'))) { throw 'README.md was not installed' }
     $out = (& $app) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw ('{0} exited with 0x{1:X8}' -f $app, $LASTEXITCODE) }
     Write-Host $out
     if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
