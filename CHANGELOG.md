@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Running the EXE installer's `uninstall.exe` directly (for example by
+  double-clicking it) now uninstalls the application. The installer and
+  uninstaller are the same program and the action was chosen only from the
+  `/uninstall` option, so without it the uninstaller installed the
+  application again. Run as `uninstall.exe`, it now defaults to uninstall.
+- Uninstalling the EXE install no longer leaves `uninstall.exe` and the
+  install directory behind. The helper that deleted the running uninstaller
+  waited a fixed two seconds, so it failed whenever the uninstaller stayed
+  open longer, as it does while showing its final message. A temporary copy
+  of the uninstaller now waits for it to exit before deleting it and the
+  directory.
+- `setup.exe /uninstall` now removes the installation recorded in the
+  registry. It used to treat the setup program's own folder (such as
+  Downloads) as the install directory.
+
 - Installers are reproducible regardless of build directory, cache
   location or host. The linker derives Windows binaries' CodeView GUID and
   timestamps from their .pdb, which holds absolute paths, so aarch64

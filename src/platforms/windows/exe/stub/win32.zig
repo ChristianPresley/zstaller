@@ -163,7 +163,19 @@ pub extern "kernel32" fn CreateProcessW(
 
 pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) c_int;
 
-pub extern "kernel32" fn GetSystemDirectoryW(lpBuffer: [*]WCHAR, uSize: u32) callconv(.winapi) u32;
+pub const SYNCHRONIZE: DWORD = 0x00100000;
+pub const INFINITE: DWORD = 0xFFFFFFFF;
+pub const MOVEFILE_DELAY_UNTIL_REBOOT: DWORD = 0x4;
+
+pub extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) DWORD;
+pub extern "kernel32" fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: c_int, dwProcessId: DWORD) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) callconv(.winapi) DWORD;
+pub extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
+pub extern "kernel32" fn MoveFileExW(
+    lpExistingFileName: [*:0]const WCHAR,
+    lpNewFileName: ?[*:0]const WCHAR,
+    dwFlags: DWORD,
+) callconv(.winapi) c_int;
 
 pub extern "shell32" fn ShellExecuteW(
     hwnd: ?HWND,

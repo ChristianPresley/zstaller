@@ -19,8 +19,8 @@
 //! zstaller compiles this program once per Windows target with the
 //! application's files embedded (`@import("payload")`) and its settings
 //! baked in (`@import("config")`). The same binary is copied into the
-//! install directory as `uninstall.exe`; run with `/uninstall` it removes
-//! the application again.
+//! install directory as `uninstall.exe`; run under that name, or with
+//! `/uninstall`, it removes the application again.
 //!
 //! The installer installs per machine, so its manifest requests
 //! administrator rights and Windows shows a UAC prompt when it starts.
@@ -38,7 +38,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const manifest_name = ".zstaller-files";
-const uninstaller_name = "uninstall.exe";
+const uninstaller_name = cli.uninstaller_name;
 const uninstall_key_prefix = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\";
 const environment_key = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
 
@@ -80,18 +80,21 @@ pub fn main(init: std.process.Init) u8 {
         return @intFromEnum(ExitCode.usage);
     };
     state.silent = cmd.silent;
-    const code: ExitCode = switch (cmd.action) {
+    const self_path = std.process.executablePathAlloc(init.io, gpa) catch return @intFromEnum(ExitCode.failure);
+    const action = cmd.action orelse cli.defaultAction(self_path);
+    const code: ExitCode = switch (action) {
         .help => blk: {
             state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ cli.help_text, w32.MB_ICONINFORMATION);
             break :blk .success;
         },
-        .install => install(state, cmd) catch |err| state.fail("Installation failed: {t}", .{err}),
-        .uninstall => uninstall(state) catch |err| state.fail("Uninstall failed: {t}", .{err}),
+        .install => install(state, cmd, self_path) catch |err| state.fail("Installation failed: {t}", .{err}),
+        .uninstall => uninstall(state, self_path) catch |err| state.fail("Uninstall failed: {t}", .{err}),
+        .cleanup => cleanup(state, cmd.cleanup_dir.?, cmd.wait_handle, self_path),
     };
     return @intFromEnum(code);
 }
 
-fn install(s: State, cmd: cli.Command) !ExitCode {
+fn install(s: State, cmd: cli.Command, self_path: []const u8) !ExitCode {
     const default_dir = try defaultInstallDir(s);
     const dir = cmd.install_dir orelse default_dir;
     if (!std.fs.path.isAbsolute(dir)) return s.fail("The install directory must be an absolute path: {s}", .{dir});
@@ -136,7 +139,6 @@ fn install(s: State, cmd: cli.Command) !ExitCode {
     }
     try install_dir.writeFile(s.io, .{ .sub_path = manifest_name, .data = manifest.items });
 
-    const self_path = try std.process.executablePathAlloc(s.io, s.gpa);
     const uninstaller_path = try std.fs.path.join(s.gpa, &.{ dir, uninstaller_name });
     if (!std.ascii.eqlIgnoreCase(self_path, uninstaller_path)) {
         try Io.Dir.copyFileAbsolute(self_path, uninstaller_path, s.io, .{});
@@ -164,9 +166,14 @@ fn install(s: State, cmd: cli.Command) !ExitCode {
     return .success;
 }
 
-fn uninstall(s: State) !ExitCode {
-    const self_path = try std.process.executablePathAlloc(s.io, s.gpa);
-    const dir = std.fs.path.dirname(self_path) orelse return error.NoInstallDir;
+fn uninstall(s: State, self_path: []const u8) !ExitCode {
+    // The installed uninstaller removes the directory it is in. The setup
+    // program run with /uninstall finds the installation in the registry.
+    const dir = if (cli.defaultAction(self_path) == .uninstall)
+        std.fs.path.dirname(self_path) orelse return error.NoInstallDir
+    else
+        readString(s.gpa, uninstall_key_prefix ++ config.registry_key, "InstallLocation") orelse
+            return s.fail(config.display_name ++ " is not installed.", .{});
     if (!s.confirm("Remove " ++ config.display_name ++ " and all of its files?")) return .cancelled;
 
     var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
@@ -204,7 +211,19 @@ fn uninstall(s: State) !ExitCode {
         Io.Dir.deleteFileAbsolute(s.io, shortcut) catch {};
     }
     deleteKey(s.gpa, uninstall_key_prefix ++ config.registry_key);
-    scheduleSelfDelete(s, self_path, dir);
+
+    // Last, the uninstaller itself and the install directory. Windows
+    // cannot delete a running executable, so when that is this process a
+    // helper deletes it after this process exits.
+    const uninstaller_path = try std.fs.path.join(s.gpa, &.{ dir, uninstaller_name });
+    if (std.ascii.eqlIgnoreCase(self_path, uninstaller_path)) {
+        removeAfterExit(s, self_path, dir) catch |err| {
+            std.debug.print("could not schedule removal of {s}: {t}\n", .{ uninstaller_path, err });
+        };
+    } else {
+        Io.Dir.deleteFileAbsolute(s.io, uninstaller_path) catch {};
+        Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
+    }
 
     s.message(config.display_name ++ " was removed.", w32.MB_ICONINFORMATION);
     return .success;
@@ -297,27 +316,67 @@ fn editSystemPath(s: State, dir: []const u8, edit: PathEdit) !void {
     _ = w32.SendMessageTimeoutW(w32.HWND_BROADCAST, w32.WM_SETTINGCHANGE, 0, @bitCast(@intFromPtr(env_w.ptr)), w32.SMTO_ABORTIFHUNG, 5000, null);
 }
 
-/// The running uninstaller cannot delete its own file, so it starts a
-/// hidden cmd.exe that waits briefly, then deletes the file and the (now
-/// empty) install directory.
-fn scheduleSelfDelete(s: State, self_path: []const u8, dir: []const u8) void {
-    var sys_buf: [260]u16 = undefined;
-    const n = w32.GetSystemDirectoryW(&sys_buf, sys_buf.len);
-    if (n == 0 or n >= sys_buf.len) return;
-    const sys_dir = std.unicode.wtf16LeToWtf8Alloc(s.gpa, sys_buf[0..n]) catch return;
-    const cmd_exe = std.fs.path.join(s.gpa, &.{ sys_dir, "cmd.exe" }) catch return;
-    const line = std.fmt.allocPrint(
-        s.gpa,
-        "\"{s}\" /d /s /c \"ping -n 3 127.0.0.1 >nul & del /f /q \"{s}\" & rmdir \"{s}\"\"",
-        .{ cmd_exe, self_path, dir },
-    ) catch return;
-    const line_w = std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line) catch return;
+/// Removes the running uninstaller and the install directory once this
+/// process has exited. A copy of this program in %TEMP% is started as a
+/// hidden helper (`/_cleanup`) with an inherited handle to this process;
+/// it waits on that handle, so it works however long this process stays
+/// open (for example while the final message box is shown).
+fn removeAfterExit(s: State, self_path: []const u8, dir: []const u8) !void {
+    const temp = s.env.get("TEMP") orelse s.env.get("TMP") orelse return error.NoTempDir;
+    const pid = w32.GetCurrentProcessId();
+    const helper_name = try std.fmt.allocPrint(s.gpa, "zstaller-uninstall-{d}.exe", .{pid});
+    const helper_path = try std.fs.path.join(s.gpa, &.{ temp, helper_name });
+    try Io.Dir.copyFileAbsolute(self_path, helper_path, s.io, .{});
+    errdefer Io.Dir.deleteFileAbsolute(s.io, helper_path) catch {};
+
+    const self_handle = w32.OpenProcess(w32.SYNCHRONIZE, 1, pid) orelse return error.OpenProcessFailed;
+    defer _ = w32.CloseHandle(self_handle);
+
+    const line = try std.fmt.allocPrint(s.gpa, "\"{s}\" \"/_cleanup={s}\" /_wait={d}", .{
+        helper_path, dir, @intFromPtr(self_handle),
+    });
+    const line_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line);
     var si: w32.STARTUPINFOW = .{ .cb = @sizeOf(w32.STARTUPINFOW) };
     var pi: w32.PROCESS_INFORMATION = undefined;
-    if (w32.CreateProcessW(null, line_w.ptr, null, null, 0, w32.CREATE_NO_WINDOW, null, null, &si, &pi) != 0) {
-        if (pi.hThread) |h| _ = w32.CloseHandle(h);
-        if (pi.hProcess) |h| _ = w32.CloseHandle(h);
+    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, null, &si, &pi) == 0) {
+        return error.CreateProcessFailed;
     }
+    if (pi.hThread) |h| _ = w32.CloseHandle(h);
+    if (pi.hProcess) |h| _ = w32.CloseHandle(h);
+}
+
+/// The `/_cleanup` helper started by `removeAfterExit`: waits for the
+/// uninstaller to exit, deletes it and the install directory (if nothing
+/// else is left in it), then has Windows delete this temporary copy at the
+/// next restart, as a running program cannot delete itself.
+fn cleanup(s: State, dir: []const u8, wait_handle: ?usize, self_path: []const u8) ExitCode {
+    if (wait_handle) |h| {
+        if (h != 0) {
+            const handle: w32.HANDLE = @ptrFromInt(h);
+            _ = w32.WaitForSingleObject(handle, w32.INFINITE);
+            _ = w32.CloseHandle(handle);
+        }
+    }
+    const uninstaller_path = std.fs.path.join(s.gpa, &.{ dir, uninstaller_name }) catch return .failure;
+    // Antivirus scanners may still hold the file briefly after the
+    // process has exited.
+    var attempt: u32 = 0;
+    while (attempt < 50) : (attempt += 1) {
+        Io.Dir.deleteFileAbsolute(s.io, uninstaller_path) catch |err| switch (err) {
+            error.FileNotFound => break,
+            else => {
+                w32.Sleep(100);
+                continue;
+            },
+        };
+        break;
+    }
+    Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
+
+    if (std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, self_path)) |self_w| {
+        _ = w32.MoveFileExW(self_w.ptr, null, w32.MOVEFILE_DELAY_UNTIL_REBOOT);
+    } else |_| {}
+    return .success;
 }
 
 fn messageBox(gpa: Allocator, text: []const u8, flags: u32) c_int {
