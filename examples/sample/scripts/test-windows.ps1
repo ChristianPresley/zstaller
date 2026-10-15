@@ -1,0 +1,84 @@
+# Copyright 2026 The zstaller Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# End-to-end test on Windows: build every installer, verify checksums, then
+# exercise the MSI (silent install/uninstall with msiexec, with and without
+# ADDTOPATH) and the EXE installer (silent install, silent uninstall).
+# Must run elevated, as GitHub-hosted Windows runners do.
+
+$ErrorActionPreference = 'Stop'
+Set-Location (Join-Path $PSScriptRoot '..')
+
+zig build installer --summary all
+if ($LASTEXITCODE -ne 0) { throw "zig build installer failed" }
+Set-Location zig-out/installers
+
+Write-Host '== checksums'
+foreach ($sum in Get-ChildItem *.sha256) {
+    $hash, $name = (Get-Content $sum.FullName -Raw).Trim() -split '\s+', 2
+    $actual = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLower()
+    if ($actual -ne $hash) { throw "checksum mismatch for $name" }
+    Write-Host "$name OK"
+}
+
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+$msi = (Resolve-Path "sample-1.0.0-windows-$arch.msi").Path
+$exe = (Resolve-Path "sample-1.0.0-windows-$arch-setup.exe").Path
+$dir = Join-Path $env:ProgramFiles 'Zstaller Sample'
+$app = Join-Path $dir 'sample.exe'
+
+function Invoke-Checked($file, $arguments) {
+    $p = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru
+    if ($p.ExitCode -ne 0) { throw "$file $arguments exited with $($p.ExitCode)" }
+}
+
+function Test-OnPath {
+    $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    return ($path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -contains $dir
+}
+
+function Assert-Installed($expectOnPath) {
+    if (-not (Test-Path $app)) { throw "$app was not installed" }
+    if (-not (Test-Path (Join-Path $dir 'README.md'))) { throw 'README.md was not installed' }
+    $out = & $app
+    Write-Host $out
+    if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
+    if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
+}
+
+function Assert-Removed {
+    for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+    if (Test-Path $dir) { throw "$dir still exists: $(Get-ChildItem $dir -Force | Out-String)" }
+    if (Test-OnPath) { throw 'PATH entry was not removed' }
+}
+
+Write-Host '== MSI: silent install with PATH'
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn /l*v `"$PWD\msi-install.log`""
+Assert-Installed $true
+$product = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+    Where-Object { $_.DisplayName -eq 'Zstaller Sample' }
+if (-not $product) { throw 'MSI product is not registered in Apps & Features' }
+Write-Host '== MSI: silent uninstall'
+Invoke-Checked msiexec.exe "/x `"$msi`" /qn /l*v `"$PWD\msi-uninstall.log`""
+Assert-Removed
+
+Write-Host '== MSI: silent install with ADDTOPATH=0, uninstall by product code'
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0"
+Assert-Installed $false
+$code = (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+    Where-Object { $_.DisplayName -eq 'Zstaller Sample' }).PSChildName
+Invoke-Checked msiexec.exe "/x $code /qn"
+Assert-Removed
+
+Write-Host '== EXE: silent install with /PATH'
+Invoke-Checked $exe '/S /PATH'
+Assert-Installed $true
+$key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample'
+$entry = Get-ItemProperty $key
+if ($entry.DisplayVersion -ne '1.0.0') { throw 'EXE uninstall entry missing' }
+Write-Host '== EXE: silent uninstall'
+Invoke-Checked (Join-Path $dir 'uninstall.exe') '/uninstall /S'
+Assert-Removed
+if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
+
+Write-Host 'Windows end-to-end test passed'
