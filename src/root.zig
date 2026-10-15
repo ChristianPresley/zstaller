@@ -16,12 +16,14 @@
 
 //! zstaller: a packaged installer generator for Zig projects.
 //!
-//! This is the scaffold. The metadata parser, cross-compile matrix and
-//! package generators (.deb, Windows EXE, Windows MSI) land in later
-//! milestones; see README.md for the current status.
+//! The cross-compile matrix and package generators (.deb, Windows EXE,
+//! Windows MSI) land in later milestones; see README.md for the current
+//! status.
 
 const std = @import("std");
 const build_options = @import("build_options");
+
+pub const Metadata = @import("Metadata.zig");
 
 /// The zstaller release this source tree corresponds to, taken from
 /// `.version` in build.zig.zon.
@@ -32,4 +34,8 @@ test "version round-trips to the build.zig.zon string" {
     var buf: [64]u8 = undefined;
     const formatted = try std.fmt.bufPrint(&buf, "{f}", .{version});
     try std.testing.expectEqualStrings(build_options.version, formatted);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
