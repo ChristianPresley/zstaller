@@ -87,6 +87,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "install_dir_name", o.windows.install_dir_name orelse ctx.displayName());
     config.addOption([]const u8, "registry_key", b.fmt("zstaller.{s}", .{ctx.meta.name}));
     config.addOption(bool, "start_menu_shortcut", o.windows.start_menu_shortcut);
+    config.addOption(bool, "close_running_apps", o.windows.close_running_apps);
     config.addOption(bool, "has_icon", o.icon != null);
     config.addOption([]const u8, "description", ctx.meta.description orelse "");
     config.addOption(PathMode, "add_to_path", switch (o.windows.add_to_path) {

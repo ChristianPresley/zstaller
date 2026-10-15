@@ -140,6 +140,7 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `windows.upgrade_code` | derived from name | MSI UpgradeCode. Set it once and never change it. |
 | `windows.add_to_path` | `.optional` | `.never`, `.optional` or `.always`. |
 | `windows.start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
+| `windows.close_running_apps` | `false` | Let the EXE installer and uninstaller force-quit programs running from the install directory, after asking. See [Windows EXE](#windows-exe). |
 | `deb.maintainer` | `windows.publisher` | Debian `Maintainer` field. |
 | `deb.section`, `deb.priority` | `utils`, `optional` | Debian control fields. |
 | `deb.homepage`, `deb.depends` | none | Debian control fields. |
@@ -182,6 +183,13 @@ myapp-1.2.0-windows-x86_64-setup.exe /S /PATH           silent, add to PATH
 `uninstall.exe` uninstalls when run with no options, removes every file the
 installer wrote, then deletes itself and the install directory once it has
 exited. The setup program also uninstalls with `/uninstall`.
+
+Windows cannot replace or delete the files of a running program. Before
+the installer or uninstaller changes anything, it looks for programs
+running from the install directory. By default it stops and lists them,
+with their process IDs, so the user can close them and try again. With
+`.windows.close_running_apps = true` it shows the same list and offers to
+force-quit them; a silent (`/S`) run force-quits them without asking.
 
 Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments.
 
