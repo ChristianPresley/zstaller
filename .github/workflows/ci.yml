@@ -60,11 +60,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir diag && cd diag
-          for m in Debug ReleaseSafe ReleaseSmall; do for f in hello hello_init; do
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O $m --name $f-$m-gnu
-            zig build-exe ../.github/diag/$f.zig -target aarch64-windows-msvc -O $m --name $f-$m-msvc || true
-          done; done
-          zig build-exe ../.github/diag/hello.zig -target x86_64-windows-gnu -O ReleaseSafe --name hello-x64
+          for m in Debug ReleaseSafe ReleaseFast ReleaseSmall; do
+            for f in hello_init init_exepath samplecopy; do
+              zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O $m --name $f-$m
+              zig build-exe ../.github/diag/$f.zig -target aarch64-windows-gnu -O $m -fstrip --name $f-$m-strip
+            done
+          done
           ls
 
       - uses: actions/upload-artifact@v4
@@ -131,6 +132,9 @@ jobs:
             $out = & $e.FullName 2>&1 | Out-String
             Write-Host ("{0}: exit 0x{1:X8} output: {2}" -f $e.Name, $LASTEXITCODE, $out.Trim())
           }
+          $p = Start-Process installers/sample-1.0.0-windows-aarch64-setup.exe -ArgumentList '/S /D=C:\diagtest' -Wait -PassThru
+          Write-Host ("setup.exe aarch64: exit 0x{0:X8}" -f $p.ExitCode)
+          Get-ChildItem C:\diagtest -ErrorAction SilentlyContinue | Out-String
 
       - name: Silent MSI and EXE install/uninstall
         shell: pwsh
