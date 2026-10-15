@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Release installers are built locally instead of by GitHub Actions. The
+  new `scripts/release.ps1` builds every installer from scratch with
+  `SOURCE_DATE_EPOCH` set to the commit time, checks the checksums, copies
+  the files to a chosen folder and, with `-Tag`, uploads them to a draft
+  release. The release workflow no longer builds anything: it installs,
+  runs and uninstalls the uploaded files on every platform and then
+  publishes the draft. It no longer runs when a `v*` tag is pushed.
+
 ### Fixed
 
 - Running the EXE installer's `uninstall.exe` directly (for example by

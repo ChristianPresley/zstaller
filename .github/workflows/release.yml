@@ -1,61 +1,66 @@
 name: Release
 
-# Builds the sample's installers, installs and uninstalls the exact files on
-# every supported platform, then publishes them as a GitHub release.
-#
-# Run it from the Actions tab ("Run workflow") with a tag such as v0.1.0, or
-# push a tag matching v*.
+# Verifies and publishes a draft release whose installers were built and
+# uploaded locally by scripts/release.ps1. GitHub never builds the files a
+# release ships: this workflow checks their checksums, installs, runs and
+# uninstalls the exact files on every supported platform, then publishes
+# the draft. scripts/release.ps1 -Tag starts it; to rerun it, use "Run
+# workflow" on the Actions tab with the draft's tag.
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to create, e.g. v0.1.0
+        description: Tag of the draft release to verify and publish, e.g. v0.2.0
         required: true
 
 permissions:
   contents: read
 
 env:
-  TAG: ${{ inputs.tag || github.ref_name }}
+  TAG: ${{ inputs.tag }}
 
 jobs:
-  build:
-    name: Build installers
+  fetch:
+    name: Fetch uploaded installers
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # reading draft releases needs write access
+    outputs:
+      commit: ${{ steps.download.outputs.commit }}
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
-      # The commit time fixes every timestamp in the packages; the publish
-      # job records it in the release notes so anyone can rebuild the
-      # same bytes (see "Reproducible builds" in README.md).
-      - name: Build installers
-        working-directory: examples/sample
+      - name: Download the draft release's files
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
-          zig build installer --summary all
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [ "$draft" != true ]; then
+            echo "$TAG is not a draft release; upload it with scripts/release.ps1 -Tag $TAG"
+            exit 1
+          fi
+          # Test with the scripts from the commit the files were built from.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish             --jq '"commit=" + .targetCommitish' >>"$GITHUB_OUTPUT"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir installers
+          cd installers && sha256sum --check *.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-installers
-          path: examples/sample/zig-out/installers/
+          path: installers/
           if-no-files-found: error
 
   verify-linux:
     name: Verify (${{ matrix.os }})
-    needs: build
+    needs: fetch
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.fetch.outputs.commit }}
       - uses: actions/download-artifact@v4
         with:
           name: release-installers
@@ -65,13 +70,15 @@ jobs:
 
   verify-windows:
     name: Verify (${{ matrix.os }})
-    needs: build
+    needs: fetch
     strategy:
       matrix:
         os: [windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.fetch.outputs.commit }}
       - uses: actions/download-artifact@v4
         with:
           name: release-installers
@@ -87,34 +94,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-installers
-          path: installers
-      - name: Create the release
+      - name: Publish the draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          epoch="$(git log -1 --format=%ct)"
-          {
-            cat .github/release-notes.md
-            echo
-            echo '## Reproducing these files'
-            echo
-            echo "They were built from commit $GITHUB_SHA with Zig 0.16.0 and"
-            echo "\`SOURCE_DATE_EPOCH=$epoch\`. To rebuild them byte for byte:"
-            echo
-            echo '```'
-            echo "git clone https://github.com/$GITHUB_REPOSITORY && cd ${GITHUB_REPOSITORY#*/}"
-            echo "git checkout $GITHUB_SHA"
-            echo "cd examples/sample"
-            echo "SOURCE_DATE_EPOCH=$epoch zig build installer"
-            echo "sha256sum zig-out/installers/*.msi zig-out/installers/*.exe zig-out/installers/*.deb"
-            echo '```'
-          } >"$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" installers/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "zstaller ${TAG#v}" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
