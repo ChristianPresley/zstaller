@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.zig text eol=lf
+*.zon text eol=lf
+*.bat text eol=crlf
+*.ico binary
+*.png binary
