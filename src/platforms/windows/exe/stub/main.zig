@@ -434,9 +434,14 @@ fn removeAfterExit(s: State, self_path: []const u8, dir: []const u8) !void {
         helper_path, dir, @intFromPtr(self_handle),
     });
     const line_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line);
+    // Start the helper in %TEMP%. It would otherwise inherit this
+    // process's working directory, which is the install directory when the
+    // uninstaller is opened from Explorer, and Windows cannot delete a
+    // directory that a process has as its working directory.
+    const temp_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, temp);
     var si: w32.STARTUPINFOW = .{ .cb = @sizeOf(w32.STARTUPINFOW) };
     var pi: w32.PROCESS_INFORMATION = undefined;
-    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, null, &si, &pi) == 0) {
+    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, temp_w.ptr, &si, &pi) == 0) {
         return error.CreateProcessFailed;
     }
     if (pi.hThread) |h| _ = w32.CloseHandle(h);
@@ -469,7 +474,19 @@ fn cleanup(s: State, dir: []const u8, wait_handle: ?usize, self_path: []const u8
         };
         break;
     }
-    Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
+    // The same goes for the directory, which Explorer or a scanner may
+    // still have open. Files the user added keep it, as they should.
+    attempt = 0;
+    while (attempt < 50) : (attempt += 1) {
+        Io.Dir.deleteDirAbsolute(s.io, dir) catch |err| switch (err) {
+            error.FileNotFound, error.DirNotEmpty => break,
+            else => {
+                w32.Sleep(100);
+                continue;
+            },
+        };
+        break;
+    }
 
     if (std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, self_path)) |self_w| {
         _ = w32.MoveFileExW(self_w.ptr, null, w32.MOVEFILE_DELAY_UNTIL_REBOOT);

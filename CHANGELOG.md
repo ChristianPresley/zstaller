@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process ID. A file that another program has open is named in the error
   too. The installer does the same check before it updates an
   installation.
+- The EXE uninstaller now removes the empty install directory when it is
+  opened from Explorer. The helper that deletes the uninstaller inherited
+  its working directory, which was the install directory, and Windows does
+  not delete a directory that a process is using as its working directory.
+  The helper now starts in `%TEMP%`.
 - Running the EXE installer's `uninstall.exe` directly (for example by
   double-clicking it) now uninstalls the application. The installer and
   uninstaller are the same program and the action was chosen only from the
