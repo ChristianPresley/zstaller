@@ -176,8 +176,12 @@ rights.
 myapp-1.2.0-windows-x86_64-setup.exe /S                 silent install
 myapp-1.2.0-windows-x86_64-setup.exe /S /D=C:\Tools\myapp
 myapp-1.2.0-windows-x86_64-setup.exe /S /PATH           silent, add to PATH
-"C:\Program Files\myapp\uninstall.exe" /uninstall /S    silent uninstall
+"C:\Program Files\myapp\uninstall.exe" /S               silent uninstall
 ```
+
+`uninstall.exe` uninstalls when run with no options, removes every file the
+installer wrote, then deletes itself and the install directory once it has
+exited. The setup program also uninstalls with `/uninstall`.
 
 Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments.
 
