@@ -176,10 +176,21 @@ pub const Context = struct {
     }
 };
 
-/// Zig 0.16 programs built for aarch64 Windows with debug info stripped
-/// (`-fstrip`, or ReleaseSmall's default) crash with an access violation
-/// at startup once they use `std.process.Init`. Keeping the symbols avoids
-/// it, so zstaller does that for the application and the installer stub.
+/// Whether `target` must be built with debug info to get correct code.
+///
+/// On aarch64 Windows, the LLVM bundled with Zig 0.16 miscompiles
+/// thread-local variable accesses when debug info is stripped (`-fstrip`,
+/// or ReleaseSmall's default). Without debug info the object file refers
+/// to each variable as an offset into the `.tls$` section, and LLVM writes
+/// that whole offset into the `add ..., lsl #12` instruction that carries
+/// an IMAGE_REL_ARM64_SECREL_HIGH12A relocation instead of only its upper
+/// bits. The linker adds the immediate it finds there, so a variable at
+/// offset 8 is accessed at 0x8008, far outside the thread's TLS block, and
+/// the program faults at startup. With debug info the references name the
+/// variables themselves, the immediates stay zero, and the offsets are
+/// right, so zstaller keeps debug info for the application and the
+/// installer stub on this target. The debug info goes to a separate .pdb
+/// that is not packaged.
 pub fn needsSymbols(target: std.Target) bool {
     return target.os.tag == .windows and target.cpu.arch == .aarch64;
 }

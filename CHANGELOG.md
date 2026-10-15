@@ -20,8 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI installs, runs and uninstalls the ARM64 packages natively on
   `ubuntu-24.04-arm` and `windows-11-arm` runners.
 - aarch64 Windows binaries (the application and the EXE installer stub)
-  keep their debug symbols: Zig 0.16 programs for that target crash at
-  startup with an access violation when stripped.
+  are built with debug info: when it is stripped, Zig 0.16's LLVM encodes
+  thread-local variable offsets wrongly (SECREL_HIGH12A immediates hold
+  the full offset), so programs read and write outside their TLS block
+  and crash at startup. With debug info the offsets are correct.
 - Release workflow: builds the sample installers, verifies the exact files
   on x86_64 and ARM64 Windows and Ubuntu, then publishes a GitHub release.
 
