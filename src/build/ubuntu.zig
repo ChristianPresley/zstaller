@@ -48,6 +48,7 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
     const run = ctx.runPack("deb");
     run.addArg("--out");
     const out = run.addOutputFileArg("package.deb");
+    ctx.addMtimeArg(run);
     run.addArgs(&.{ "--name", pkg_name });
     run.addArgs(&.{ "--version", naming.debVersion(b.allocator, ctx.meta.version) catch @panic("OOM") });
     run.addArgs(&.{ "--arch", ctx.target.debArch() });
@@ -63,7 +64,7 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
     }
 
     run.addArg("--file");
-    run.addArtifactArg(ctx.binary);
+    run.addFileArg(ctx.binary_file);
     run.addArgs(&.{ b.fmt("/usr/bin/{s}", .{ctx.binary.out_filename}), "755" });
     for (o.extra_files) |f| {
         run.addArg("--file");

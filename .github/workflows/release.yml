@@ -32,6 +32,9 @@ jobs:
         with:
           version: 0.16.0
 
+      # The commit time fixes every timestamp in the packages; the publish
+      # job records it in the release notes so anyone can rebuild the
+      # same bytes (see "Reproducible builds" in README.md).
       - name: Build installers
         working-directory: examples/sample
         run: |
@@ -93,8 +96,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          epoch="$(git log -1 --format=%ct)"
+          {
+            cat .github/release-notes.md
+            echo
+            echo '## Reproducing these files'
+            echo
+            echo "They were built from commit $GITHUB_SHA with Zig 0.16.0 and"
+            echo "\`SOURCE_DATE_EPOCH=$epoch\`. To rebuild them byte for byte:"
+            echo
+            echo '```'
+            echo "git clone https://github.com/$GITHUB_REPOSITORY && cd ${GITHUB_REPOSITORY#*/}"
+            echo "git checkout $GITHUB_SHA"
+            echo "cd examples/sample"
+            echo "SOURCE_DATE_EPOCH=$epoch zig build installer"
+            echo "sha256sum zig-out/installers/*.msi zig-out/installers/*.exe zig-out/installers/*.deb"
+            echo '```'
+          } >"$RUNNER_TEMP/notes.md"
           gh release create "$TAG" installers/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "zstaller ${TAG#v}" \
-            --notes-file .github/release-notes.md
+            --notes-file "$RUNNER_TEMP/notes.md"

@@ -109,7 +109,19 @@ pub const Options = struct {
     deb: DebOptions = .{},
     /// Subdirectory of the install prefix that receives the installers.
     install_subdir: []const u8 = "installers",
+    /// Seconds since the Unix epoch used for every timestamp written into
+    /// the packages (archive entries, MSI summary information and cabinet
+    /// file dates). Defaults to the `SOURCE_DATE_EPOCH` environment
+    /// variable when it is set, else 315532800 (1980-01-01). The value is
+    /// passed to the packaging steps as an argument, so changing it
+    /// rebuilds the installers instead of reusing cached ones.
+    source_date_epoch: ?u64 = null,
 };
+
+/// The timestamp used when neither `Options.source_date_epoch` nor
+/// `SOURCE_DATE_EPOCH` is set: 1980-01-01, the earliest date a cabinet
+/// (MS-DOS format) timestamp can hold.
+pub const default_source_date_epoch: u64 = 315532800;
 
 pub const Output = struct {
     target: Target,
@@ -145,6 +157,11 @@ pub const Context = struct {
     target: Target,
     resolved_target: Build.ResolvedTarget,
     binary: *Build.Step.Compile,
+    /// The binary to package. For Windows targets this is `binary` after
+    /// `normalizePe`; otherwise it is `binary`'s emitted file.
+    binary_file: LazyPath,
+    /// Seconds since the Unix epoch for package timestamps.
+    source_date_epoch: u64,
     top: *Build.Step,
 
     /// Records a configuration error. The `installer` step fails with
@@ -156,10 +173,13 @@ pub const Context = struct {
 
     /// A `zstaller-pack` invocation.
     pub fn runPack(ctx: *const Context, command: []const u8) *Build.Step.Run {
-        const run = ctx.b.addRunArtifact(ctx.pack);
-        run.setName(ctx.b.fmt("zstaller-pack {s} ({s})", .{ command, ctx.target.slug() }));
-        run.addArg(command);
-        return run;
+        return runPackTool(ctx.b, ctx.pack, command, ctx.target);
+    }
+
+    /// Adds `--mtime <source_date_epoch>` to a packaging step. Because it
+    /// is an argument, the step's cache key includes it.
+    pub fn addMtimeArg(ctx: *const Context, run: *Build.Step.Run) void {
+        run.addArgs(&.{ "--mtime", ctx.b.fmt("{d}", .{ctx.source_date_epoch}) });
     }
 
     /// The `zstaller` library module compiled for `target`.
@@ -193,6 +213,23 @@ pub const Context = struct {
 /// that is not packaged.
 pub fn needsSymbols(target: std.Target) bool {
     return target.os.tag == .windows and target.cpu.arch == .aarch64;
+}
+
+fn runPackTool(b: *Build, pack: *Build.Step.Compile, command: []const u8, target: Target) *Build.Step.Run {
+    const run = b.addRunArtifact(pack);
+    run.setName(b.fmt("zstaller-pack {s} ({s})", .{ command, target.slug() }));
+    run.addArg(command);
+    return run;
+}
+
+/// Returns a copy of the PE image `file` whose CodeView GUID and
+/// timestamps no longer depend on the paths the linker recorded in its
+/// .pdb, so the same source produces the same bytes in any directory. See
+/// `src/platforms/windows/pe.zig`.
+pub fn normalizePe(b: *Build, pack: *Build.Step.Compile, target: Target, file: LazyPath, basename: []const u8) LazyPath {
+    const run = runPackTool(b, pack, "pe-normalize", target);
+    run.addFileArg(file);
+    return run.addOutputFileArg(basename);
 }
 
 pub fn createZstallerModule(zb: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Build.Module {
@@ -238,6 +275,15 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         return .{ .step = top, .outputs = &.{} };
     };
 
+    const epoch = opts.source_date_epoch orelse
+        if (b.graph.environ_map.get("SOURCE_DATE_EPOCH")) |value|
+            std.fmt.parseInt(u64, value, 10) catch {
+                top.dependOn(&b.addFail(b.fmt("zstaller: SOURCE_DATE_EPOCH is not a non-negative integer: '{s}'", .{value})).step);
+                return .{ .step = top, .outputs = &.{} };
+            }
+        else
+            default_source_date_epoch;
+
     const pack = createPackTool(zb);
     var outputs: std.ArrayList(Output) = .empty;
 
@@ -245,6 +291,10 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         const resolved = b.resolveTargetQuery(t.query());
         const binary = opts.executable(b, resolved, opts.optimize);
         if (needsSymbols(resolved.result)) binary.root_module.strip = false;
+        const binary_file = if (resolved.result.os.tag == .windows)
+            normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename)
+        else
+            binary.getEmittedBin();
         const ctx: Context = .{
             .b = b,
             .zb = zb,
@@ -254,6 +304,8 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             .target = t,
             .resolved_target = resolved,
             .binary = binary,
+            .binary_file = binary_file,
+            .source_date_epoch = epoch,
             .top = top,
         };
         for (t.formats()) |format| {
