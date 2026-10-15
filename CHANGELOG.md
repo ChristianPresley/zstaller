@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The EXE installer has a setup wizard: Welcome, License (optional),
+  Install location with a folder picker and disk space, Additional tasks,
+  a progress page and a Finished page that can launch the application.
+  `uninstall.exe` uses the same window. It scales with each monitor's DPI
+  and uses the application icon. Silent `/S` installs are unchanged.
+- `windows.wizard` customizes the wizard from `build.zig`: a
+  `welcome_image` (493x312) and `banner_image` (493x58), at those sizes
+  or double, as PNG or BMP; a `license_file`; `welcome_text` and
+  `finish_text`; `launch_on_finish`; and the `accent_color` of the
+  built-in artwork. Images are decoded and size-checked at build time.
+- `windows.install_root` (`.program_files`, `.program_data` or
+  `.system_drive`) and nested `install_dir_name` values such as
+  `"Acme\\Widget"` set the default install folder of both the EXE and the
+  MSI. `windows.allow_install_dir_change = false` locks the folder in the
+  wizard.
+- Desktop shortcuts: `windows.desktop_shortcut` (`.never`, `.optional`,
+  `.always`). The EXE offers a checkbox and accepts `/DESKTOP` and
+  `/NODESKTOP`; the MSI has a `DESKTOPSHORTCUT` property.
+- The EXE installer defaults to the folder of the installed version when
+  it upgrades.
+
 ### Changed
 
 - Release installers are built locally instead of by GitHub Actions. The

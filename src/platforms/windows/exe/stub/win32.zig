@@ -286,3 +286,347 @@ pub const IPersistFile = extern struct {
         GetCurFile: Unused,
     },
 };
+
+// ---- Windows, messages and painting, for the installer wizard.
+
+pub const HINSTANCE = *opaque {};
+pub const HICON = *opaque {};
+pub const HCURSOR = *opaque {};
+pub const HDC = *opaque {};
+pub const HMONITOR = *opaque {};
+/// Fonts, brushes and bitmaps.
+pub const HGDIOBJ = *anyopaque;
+pub const WPARAM = usize;
+pub const LPARAM = isize;
+pub const LRESULT = isize;
+pub const WNDPROC = *const fn (HWND, u32, WPARAM, LPARAM) callconv(.winapi) LRESULT;
+
+pub const POINT = extern struct { x: i32 = 0, y: i32 = 0 };
+pub const RECT = extern struct { left: i32 = 0, top: i32 = 0, right: i32 = 0, bottom: i32 = 0 };
+
+pub const MSG = extern struct {
+    hwnd: ?HWND = null,
+    message: u32 = 0,
+    wParam: WPARAM = 0,
+    lParam: LPARAM = 0,
+    time: DWORD = 0,
+    pt: POINT = .{},
+    lPrivate: DWORD = 0,
+};
+
+pub const WNDCLASSEXW = extern struct {
+    cbSize: u32 = @sizeOf(WNDCLASSEXW),
+    style: u32 = 0,
+    lpfnWndProc: WNDPROC,
+    cbClsExtra: i32 = 0,
+    cbWndExtra: i32 = 0,
+    hInstance: ?HINSTANCE,
+    hIcon: ?HICON = null,
+    hCursor: ?HCURSOR = null,
+    hbrBackground: ?HGDIOBJ = null,
+    lpszMenuName: ?[*:0]const WCHAR = null,
+    lpszClassName: [*:0]const WCHAR,
+    hIconSm: ?HICON = null,
+};
+
+pub const PAINTSTRUCT = extern struct {
+    hdc: ?HDC = null,
+    fErase: c_int = 0,
+    rcPaint: RECT = .{},
+    fRestore: c_int = 0,
+    fIncUpdate: c_int = 0,
+    rgbReserved: [32]u8 = @splat(0),
+};
+
+pub const MONITORINFO = extern struct {
+    cbSize: DWORD = @sizeOf(MONITORINFO),
+    rcMonitor: RECT = .{},
+    rcWork: RECT = .{},
+    dwFlags: DWORD = 0,
+};
+
+pub const BITMAPINFOHEADER = extern struct {
+    biSize: u32 = @sizeOf(BITMAPINFOHEADER),
+    biWidth: i32,
+    biHeight: i32,
+    biPlanes: u16 = 1,
+    biBitCount: u16 = 32,
+    biCompression: u32 = 0,
+    biSizeImage: u32 = 0,
+    biXPelsPerMeter: i32 = 0,
+    biYPelsPerMeter: i32 = 0,
+    biClrUsed: u32 = 0,
+    biClrImportant: u32 = 0,
+};
+
+pub const BITMAPINFO = extern struct {
+    bmiHeader: BITMAPINFOHEADER,
+    bmiColors: [1]u32 = .{0},
+};
+
+pub const INITCOMMONCONTROLSEX = extern struct {
+    dwSize: DWORD = @sizeOf(INITCOMMONCONTROLSEX),
+    dwICC: DWORD,
+};
+
+pub const ICC_STANDARD_CLASSES: DWORD = 0x4000;
+pub const ICC_PROGRESS_CLASS: DWORD = 0x20;
+
+pub const WS_OVERLAPPED: DWORD = 0x00000000;
+pub const WS_CAPTION: DWORD = 0x00C00000;
+pub const WS_SYSMENU: DWORD = 0x00080000;
+pub const WS_MINIMIZEBOX: DWORD = 0x00020000;
+pub const WS_CLIPCHILDREN: DWORD = 0x02000000;
+pub const WS_CHILD: DWORD = 0x40000000;
+pub const WS_VISIBLE: DWORD = 0x10000000;
+pub const WS_TABSTOP: DWORD = 0x00010000;
+pub const WS_GROUP: DWORD = 0x00020000;
+pub const WS_VSCROLL: DWORD = 0x00200000;
+pub const WS_BORDER: DWORD = 0x00800000;
+pub const WS_EX_CONTROLPARENT: DWORD = 0x00010000;
+pub const WS_EX_CLIENTEDGE: DWORD = 0x00000200;
+pub const CW_USEDEFAULT: i32 = @bitCast(@as(u32, 0x80000000));
+
+pub const BS_PUSHBUTTON: DWORD = 0x0;
+pub const BS_DEFPUSHBUTTON: DWORD = 0x1;
+pub const BS_AUTOCHECKBOX: DWORD = 0x3;
+pub const ES_MULTILINE: DWORD = 0x4;
+pub const ES_AUTOVSCROLL: DWORD = 0x40;
+pub const ES_AUTOHSCROLL: DWORD = 0x80;
+pub const ES_READONLY: DWORD = 0x800;
+pub const PBS_SMOOTH: DWORD = 0x1;
+
+pub const SW_HIDE: c_int = 0;
+pub const SW_SHOW: c_int = 5;
+
+pub const SWP_NOSIZE: u32 = 0x1;
+pub const SWP_NOMOVE: u32 = 0x2;
+pub const SWP_NOZORDER: u32 = 0x4;
+pub const SWP_NOACTIVATE: u32 = 0x10;
+
+pub const WM_DESTROY: u32 = 0x0002;
+pub const WM_SIZE: u32 = 0x0005;
+pub const WM_SETFOCUS: u32 = 0x0007;
+pub const WM_PAINT: u32 = 0x000F;
+pub const WM_CLOSE: u32 = 0x0010;
+pub const WM_ERASEBKGND: u32 = 0x0014;
+pub const WM_SETFONT: u32 = 0x0030;
+pub const WM_SETICON: u32 = 0x0080;
+pub const WM_COMMAND: u32 = 0x0111;
+pub const WM_CTLCOLOREDIT: u32 = 0x0133;
+pub const WM_CTLCOLORBTN: u32 = 0x0135;
+pub const WM_CTLCOLORSTATIC: u32 = 0x0138;
+pub const WM_DPICHANGED: u32 = 0x02E0;
+pub const WM_PRINTCLIENT: u32 = 0x0318;
+pub const WM_QUIT: u32 = 0x0012;
+pub const BM_GETCHECK: u32 = 0x00F0;
+pub const BM_SETCHECK: u32 = 0x00F1;
+pub const BM_SETSTYLE: u32 = 0x00F4;
+pub const BST_CHECKED: usize = 1;
+pub const BN_CLICKED: u16 = 0;
+pub const EN_CHANGE: u16 = 0x0300;
+pub const EM_SETSEL: u32 = 0x00B1;
+pub const EM_SETLIMITTEXT: u32 = 0x00C5;
+pub const EM_SETMARGINS: u32 = 0x00D3;
+pub const EC_LEFTMARGIN: usize = 0x1;
+pub const EC_RIGHTMARGIN: usize = 0x2;
+pub const PBM_SETPOS: u32 = 0x0402;
+pub const PBM_SETRANGE32: u32 = 0x0406;
+pub const PBM_SETMARQUEE: u32 = 0x040A;
+pub const PM_REMOVE: u32 = 0x1;
+pub const ICON_SMALL: usize = 0;
+pub const ICON_BIG: usize = 1;
+
+pub const IDOK: c_int = 1;
+pub const IDCANCEL: c_int = 2;
+pub const MB_OKCANCEL: u32 = 0x1;
+pub const MB_ICONWARNING: u32 = 0x30;
+pub const MB_DEFBUTTON2: u32 = 0x100;
+
+pub const IMAGE_ICON: u32 = 1;
+pub const LR_DEFAULTCOLOR: u32 = 0;
+pub const LR_SHARED: u32 = 0x8000;
+pub const DI_NORMAL: u32 = 0x3;
+/// `MAKEINTRESOURCE(32512)`: the standard arrow cursor and application
+/// icon.
+pub const IDC_ARROW: usize = 32512;
+pub const IDI_APPLICATION: usize = 32512;
+
+pub const MONITOR_DEFAULTTONEAREST: DWORD = 0x2;
+
+pub const DT_LEFT: u32 = 0x0;
+pub const DT_CENTER: u32 = 0x1;
+pub const DT_VCENTER: u32 = 0x4;
+pub const DT_WORDBREAK: u32 = 0x10;
+pub const DT_SINGLELINE: u32 = 0x20;
+pub const DT_NOPREFIX: u32 = 0x800;
+pub const DT_CALCRECT: u32 = 0x400;
+pub const DT_END_ELLIPSIS: u32 = 0x8000;
+pub const DT_PATH_ELLIPSIS: u32 = 0x4000;
+
+pub const TRANSPARENT: c_int = 1;
+pub const HALFTONE: c_int = 4;
+pub const DIB_RGB_COLORS: u32 = 0;
+pub const SRCCOPY: u32 = 0x00CC0020;
+pub const FW_NORMAL: c_int = 400;
+pub const FW_SEMIBOLD: c_int = 600;
+pub const DEFAULT_CHARSET: u32 = 1;
+pub const CLEARTYPE_QUALITY: u32 = 5;
+
+pub extern "user32" fn RegisterClassExW(lpwcx: *const WNDCLASSEXW) callconv(.winapi) u16;
+pub extern "user32" fn CreateWindowExW(
+    dwExStyle: DWORD,
+    lpClassName: [*:0]const WCHAR,
+    lpWindowName: ?[*:0]const WCHAR,
+    dwStyle: DWORD,
+    X: i32,
+    Y: i32,
+    nWidth: i32,
+    nHeight: i32,
+    hWndParent: ?HWND,
+    hMenu: ?*anyopaque,
+    hInstance: ?HINSTANCE,
+    lpParam: ?*anyopaque,
+) callconv(.winapi) ?HWND;
+pub extern "user32" fn DefWindowProcW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) LRESULT;
+pub extern "user32" fn GetMessageW(lpMsg: *MSG, hWnd: ?HWND, wMsgFilterMin: u32, wMsgFilterMax: u32) callconv(.winapi) c_int;
+pub extern "user32" fn PeekMessageW(lpMsg: *MSG, hWnd: ?HWND, wMsgFilterMin: u32, wMsgFilterMax: u32, wRemoveMsg: u32) callconv(.winapi) c_int;
+pub extern "user32" fn TranslateMessage(lpMsg: *const MSG) callconv(.winapi) c_int;
+pub extern "user32" fn DispatchMessageW(lpMsg: *const MSG) callconv(.winapi) LRESULT;
+pub extern "user32" fn IsDialogMessageW(hDlg: HWND, lpMsg: *MSG) callconv(.winapi) c_int;
+pub extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.winapi) void;
+pub extern "user32" fn PostMessageW(hWnd: ?HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) c_int;
+pub extern "user32" fn DestroyWindow(hWnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn ShowWindow(hWnd: HWND, nCmdShow: c_int) callconv(.winapi) c_int;
+pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) callconv(.winapi) c_int;
+pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: [*:0]const WCHAR) callconv(.winapi) c_int;
+pub extern "user32" fn GetWindowTextW(hWnd: HWND, lpString: [*]WCHAR, nMaxCount: c_int) callconv(.winapi) c_int;
+pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn EnableWindow(hWnd: HWND, bEnable: c_int) callconv(.winapi) c_int;
+pub extern "user32" fn IsWindowEnabled(hWnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn SendMessageW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) LRESULT;
+pub extern "user32" fn InvalidateRect(hWnd: HWND, lpRect: ?*const RECT, bErase: c_int) callconv(.winapi) c_int;
+pub extern "user32" fn UpdateWindow(hWnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn BeginPaint(hWnd: HWND, lpPaint: *PAINTSTRUCT) callconv(.winapi) ?HDC;
+pub extern "user32" fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) callconv(.winapi) c_int;
+pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.winapi) c_int;
+pub extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: usize) callconv(.winapi) ?HCURSOR;
+pub extern "user32" fn LoadImageW(hInst: ?HINSTANCE, name: usize, type: u32, cx: c_int, cy: c_int, fuLoad: u32) callconv(.winapi) ?HANDLE;
+pub extern "user32" fn DestroyIcon(hIcon: HICON) callconv(.winapi) c_int;
+pub extern "user32" fn GetDpiForWindow(hwnd: HWND) callconv(.winapi) u32;
+pub extern "user32" fn AdjustWindowRectExForDpi(lpRect: *RECT, dwStyle: DWORD, bMenu: c_int, dwExStyle: DWORD, dpi: u32) callconv(.winapi) c_int;
+pub extern "user32" fn MonitorFromWindow(hwnd: HWND, dwFlags: DWORD) callconv(.winapi) ?HMONITOR;
+pub extern "user32" fn GetMonitorInfoW(hMonitor: HMONITOR, lpmi: *MONITORINFO) callconv(.winapi) c_int;
+pub extern "user32" fn SetFocus(hWnd: ?HWND) callconv(.winapi) ?HWND;
+pub extern "user32" fn GetFocus() callconv(.winapi) ?HWND;
+pub extern "user32" fn SetForegroundWindow(hWnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn FillRect(hDC: HDC, lprc: *const RECT, hbr: HGDIOBJ) callconv(.winapi) c_int;
+pub extern "user32" fn DrawTextW(hdc: HDC, lpchText: [*]const WCHAR, cchText: c_int, lprc: *RECT, format: u32) callconv(.winapi) c_int;
+pub extern "user32" fn DrawIconEx(hdc: HDC, xLeft: c_int, yTop: c_int, hIcon: HICON, cxWidth: c_int, cyWidth: c_int, istepIfAniCur: u32, hbrFlickerFreeDraw: ?HGDIOBJ, diFlags: u32) callconv(.winapi) c_int;
+
+pub extern "gdi32" fn CreateFontW(
+    cHeight: c_int,
+    cWidth: c_int,
+    cEscapement: c_int,
+    cOrientation: c_int,
+    cWeight: c_int,
+    bItalic: u32,
+    bUnderline: u32,
+    bStrikeOut: u32,
+    iCharSet: u32,
+    iOutPrecision: u32,
+    iClipPrecision: u32,
+    iQuality: u32,
+    iPitchAndFamily: u32,
+    pszFaceName: [*:0]const WCHAR,
+) callconv(.winapi) ?HGDIOBJ;
+pub extern "gdi32" fn DeleteObject(ho: HGDIOBJ) callconv(.winapi) c_int;
+pub extern "gdi32" fn SelectObject(hdc: HDC, h: HGDIOBJ) callconv(.winapi) ?HGDIOBJ;
+pub extern "gdi32" fn CreateSolidBrush(color: u32) callconv(.winapi) ?HGDIOBJ;
+pub extern "gdi32" fn SetBkMode(hdc: HDC, mode: c_int) callconv(.winapi) c_int;
+pub extern "gdi32" fn SetBkColor(hdc: HDC, color: u32) callconv(.winapi) u32;
+pub extern "gdi32" fn SetTextColor(hdc: HDC, color: u32) callconv(.winapi) u32;
+pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) ?HDC;
+pub extern "gdi32" fn CreateCompatibleBitmap(hdc: HDC, cx: c_int, cy: c_int) callconv(.winapi) ?HGDIOBJ;
+pub extern "gdi32" fn DeleteDC(hdc: HDC) callconv(.winapi) c_int;
+pub extern "gdi32" fn BitBlt(hdc: HDC, x: c_int, y: c_int, cx: c_int, cy: c_int, hdcSrc: ?HDC, x1: c_int, y1: c_int, rop: u32) callconv(.winapi) c_int;
+pub extern "gdi32" fn StretchDIBits(
+    hdc: HDC,
+    xDest: c_int,
+    yDest: c_int,
+    DestWidth: c_int,
+    DestHeight: c_int,
+    xSrc: c_int,
+    ySrc: c_int,
+    SrcWidth: c_int,
+    SrcHeight: c_int,
+    lpBits: ?*const anyopaque,
+    lpbmi: *const BITMAPINFO,
+    iUsage: u32,
+    rop: u32,
+) callconv(.winapi) c_int;
+pub extern "gdi32" fn SetStretchBltMode(hdc: HDC, mode: c_int) callconv(.winapi) c_int;
+pub extern "gdi32" fn SetBrushOrgEx(hdc: HDC, x: c_int, y: c_int, lppt: ?*POINT) callconv(.winapi) c_int;
+
+pub extern "comctl32" fn InitCommonControlsEx(picce: *const INITCOMMONCONTROLSEX) callconv(.winapi) c_int;
+
+pub extern "kernel32" fn GetModuleHandleW(lpModuleName: ?[*:0]const WCHAR) callconv(.winapi) ?HINSTANCE;
+pub extern "kernel32" fn GetDiskFreeSpaceExW(
+    lpDirectoryName: [*:0]const WCHAR,
+    lpFreeBytesAvailableToCaller: ?*u64,
+    lpTotalNumberOfBytes: ?*u64,
+    lpTotalNumberOfFreeBytes: ?*u64,
+) callconv(.winapi) c_int;
+
+// ---- The folder picker (IFileOpenDialog with FOS_PICKFOLDERS).
+
+pub const CLSID_FileOpenDialog: GUID = .{ .data1 = 0xDC1C5A9C, .data2 = 0xE88A, .data3 = 0x4DDE, .data4 = .{ 0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7 } };
+pub const IID_IFileOpenDialog: GUID = .{ .data1 = 0xD57C7288, .data2 = 0xD4AD, .data3 = 0x4768, .data4 = .{ 0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60 } };
+pub const IID_IShellItem: GUID = .{ .data1 = 0x43826D1E, .data2 = 0xE718, .data3 = 0x42EE, .data4 = .{ 0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE } };
+pub const FOS_PICKFOLDERS: DWORD = 0x20;
+pub const FOS_FORCEFILESYSTEM: DWORD = 0x40;
+pub const FOS_PATHMUSTEXIST: DWORD = 0x800;
+pub const SIGDN_FILESYSPATH: u32 = 0x80058000;
+
+/// IFileOpenDialog vtable up to `GetResult`, in declaration order
+/// (shobjidl_core.h: IUnknown, IModalWindow, IFileDialog).
+pub const IFileOpenDialog = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: Unused,
+        AddRef: Unused,
+        Release: *const fn (*IFileOpenDialog) callconv(.winapi) u32,
+        Show: *const fn (*IFileOpenDialog, ?HWND) callconv(.winapi) HRESULT,
+        SetFileTypes: Unused,
+        SetFileTypeIndex: Unused,
+        GetFileTypeIndex: Unused,
+        Advise: Unused,
+        Unadvise: Unused,
+        SetOptions: *const fn (*IFileOpenDialog, DWORD) callconv(.winapi) HRESULT,
+        GetOptions: *const fn (*IFileOpenDialog, *DWORD) callconv(.winapi) HRESULT,
+        SetDefaultFolder: Unused,
+        SetFolder: *const fn (*IFileOpenDialog, *IShellItem) callconv(.winapi) HRESULT,
+        GetFolder: Unused,
+        GetCurrentSelection: Unused,
+        SetFileName: Unused,
+        GetFileName: Unused,
+        SetTitle: *const fn (*IFileOpenDialog, [*:0]const WCHAR) callconv(.winapi) HRESULT,
+        SetOkButtonLabel: Unused,
+        SetFileNameLabel: Unused,
+        GetResult: *const fn (*IFileOpenDialog, *?*IShellItem) callconv(.winapi) HRESULT,
+    },
+};
+
+/// IShellItem vtable up to `GetDisplayName` (shobjidl_core.h).
+pub const IShellItem = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: Unused,
+        AddRef: Unused,
+        Release: *const fn (*IShellItem) callconv(.winapi) u32,
+        BindToHandler: Unused,
+        GetParent: Unused,
+        GetDisplayName: *const fn (*IShellItem, u32, *?[*:0]WCHAR) callconv(.winapi) HRESULT,
+    },
+};
+
+pub extern "shell32" fn SHCreateItemFromParsingName(pszPath: [*:0]const WCHAR, pbc: ?*anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(.winapi) HRESULT;
+pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;

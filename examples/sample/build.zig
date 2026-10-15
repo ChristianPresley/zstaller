@@ -46,6 +46,21 @@ pub fn build(b: *std.Build) void {
             // If the sample is running, offer to force-quit it instead of
             // failing to replace or remove its files.
             .close_running_apps = true,
+            // Default install location: C:\Program Files\Zstaller Sample.
+            // Users can pick another folder in the wizard.
+            .install_root = .program_files,
+            .install_dir_name = "Zstaller Sample",
+            // Offer an (unticked) desktop shortcut checkbox.
+            .desktop_shortcut = .optional,
+            // The setup wizard's look. The images are double size
+            // (986x624 and 986x116) so they stay sharp on high-DPI
+            // displays; 493x312 and 493x58 work too.
+            .wizard = .{
+                .welcome_image = b.path("assets/wizard-welcome.png"),
+                .banner_image = b.path("assets/wizard-banner.png"),
+                .license_file = b.path("LICENSE"),
+                .accent_color = 0xF7A41D,
+            },
         },
         .deb = .{
             .maintainer = "The zstaller Authors <noreply@example.com>",

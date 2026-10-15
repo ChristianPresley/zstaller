@@ -136,11 +136,15 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `source_date_epoch` | `SOURCE_DATE_EPOCH`, else 1980-01-01 | Seconds since the Unix epoch for every timestamp in the packages. See [Reproducible builds](#reproducible-builds). |
 | `windows.publisher` | package name | Publisher and MSI Manufacturer. |
 | `windows.display_name` | package name | Product name shown to users. |
-| `windows.install_dir_name` | display name | Folder created under Program Files. |
+| `windows.install_dir_name` | display name | Folder created in `install_root`; may nest, e.g. `"Acme\\Widget"`. |
+| `windows.install_root` | `.program_files` | Where the default install folder goes: `.program_files`, `.program_data` or `.system_drive` (`C:\`). |
+| `windows.allow_install_dir_change` | `true` | Let users pick another folder in the EXE wizard. |
 | `windows.upgrade_code` | derived from name | MSI UpgradeCode. Set it once and never change it. |
 | `windows.add_to_path` | `.optional` | `.never`, `.optional` or `.always`. |
 | `windows.start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
+| `windows.desktop_shortcut` | `.optional` | All-users desktop shortcut: `.never`, `.optional` (an unticked checkbox) or `.always`. |
 | `windows.close_running_apps` | `false` | Let the EXE installer and uninstaller force-quit programs running from the install directory, after asking. See [Windows EXE](#windows-exe). |
+| `windows.wizard` | built-in look | Images, license and text of the EXE setup wizard. See [Customizing the setup wizard](#customizing-the-setup-wizard). |
 | `deb.maintainer` | `windows.publisher` | Debian `Maintainer` field. |
 | `deb.section`, `deb.priority` | `utils`, `optional` | Debian control fields. |
 | `deb.homepage`, `deb.depends` | none | Debian control fields. |
@@ -167,18 +171,41 @@ prereleases) are written with `~` so they sort before the release.
 ### Windows EXE
 
 A small native setup program (written in Zig) with the files embedded and
-compressed. It installs to `Program Files\<install dir>`, registers an entry
-in Apps & Features, adds a Start Menu shortcut, writes `uninstall.exe`, and
-can add the install directory to the system PATH. An interactive install
-ends by offering to launch the application. It requests administrator
-rights.
+compressed. Run normally, it shows a setup wizard:
+
+1. **Welcome**, with the product and version, and a note when an older
+   version is installed and will be upgraded.
+2. **License Agreement**, when `windows.wizard.license_file` is set. Next
+   stays disabled until the user accepts.
+3. **Choose Install Location**: the folder, a Browse button that opens
+   the standard Windows folder picker, and the space required and
+   available. An upgrade defaults to the folder the earlier version was
+   installed in.
+4. **Additional Tasks**: checkboxes for the PATH entry and the desktop
+   shortcut, when either is `.optional`.
+5. **Installing**, with a progress bar and the file being copied.
+6. **Finished**, with a "Launch" checkbox (`windows.wizard.launch_on_finish`),
+   or the reason Setup could not finish.
+
+It installs to `Program Files\<install dir>` by default (see
+`install_root`), registers an entry in Apps & Features, adds a Start Menu
+shortcut and optionally a desktop shortcut, writes `uninstall.exe`, and
+can add the install directory to the system PATH. The wizard follows each
+monitor's display scaling and uses the application icon in its title bar
+and taskbar button. It requests administrator rights.
+
+`uninstall.exe` shows the same window: a confirmation page, progress and a
+result page.
 
 ```
 myapp-1.2.0-windows-x86_64-setup.exe /S                 silent install
 myapp-1.2.0-windows-x86_64-setup.exe /S /D=C:\Tools\myapp
-myapp-1.2.0-windows-x86_64-setup.exe /S /PATH           silent, add to PATH
+myapp-1.2.0-windows-x86_64-setup.exe /S /PATH /DESKTOP  silent, add to PATH and the desktop
 "C:\Program Files\myapp\uninstall.exe" /S               silent uninstall
 ```
+
+`/D=`, `/PATH`, `/NOPATH`, `/DESKTOP` and `/NODESKTOP` also set the
+wizard's initial choices. Silent installs never show a window.
 
 `uninstall.exe` uninstalls when run with no options, removes every file the
 installer wrote, then deletes itself and the install directory once it has
@@ -193,16 +220,61 @@ force-quit them; a silent (`/S`) run force-quits them without asking.
 
 Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments.
 
+#### Customizing the setup wizard
+
+```zig
+.windows = .{
+    .display_name = "My App",
+    .install_dir_name = "Example Corp\\My App",
+    .wizard = .{
+        .welcome_image = b.path("assets/wizard-welcome.png"),
+        .banner_image = b.path("assets/wizard-banner.png"),
+        .license_file = b.path("LICENSE"),
+        .welcome_text = "Setup will install My App on your computer.",
+        .finish_text = "My App is ready. Click Finish to close Setup.",
+    },
+},
+```
+
+The wizard is 493x360 pixels at 100% display scaling, the size of a
+Windows Installer dialog, and its images use the Windows Installer (WiX)
+banner and dialog bitmap sizes:
+
+| Option | Size | Where | Keep in mind |
+| --- | --- | --- | --- |
+| `welcome_image` | 493x312, or 986x624 | Welcome and Finish pages, behind everything above the buttons | Put the artwork in the left 164 pixels (328 at double size). The heading and text are drawn in dark type over the rest, so keep it white or very light. |
+| `banner_image` | 493x58, or 986x116 | Top of every other page | The page title and subtitle are drawn in dark type over the left part, so keep about the left two-thirds light and put artwork on the right. |
+
+- PNG (any color type, not interlaced) or BMP (8-, 24- or 32-bit,
+  uncompressed). Transparent areas show white.
+- Supply double size for sharp output on high-DPI displays; the wizard
+  scales smoothly to the display's scaling either way.
+- Images are decoded and checked when you build. A wrong size or format
+  fails the `installer` step with a message such as
+  `windows.wizard.banner_image must be 493x58 pixels, or 986x116 for
+  high-DPI displays, but 'assets/banner.png' is 500x60`.
+- Without images, the wizard draws its own artwork: a gradient side panel
+  and a tinted header in `accent_color` (`0xRRGGBB`, default `0x0067C0`),
+  with the application icon.
+- `license_file` is UTF-8 text shown in a scrolling box.
+
+[`examples/sample`](examples/sample) uses every option, with placeholder
+artwork in [`examples/sample/assets`](examples/sample/assets).
+
 ### Windows MSI
 
 A per-machine Windows Installer package with one component per file,
 Apps & Features icon, a Start Menu shortcut, major-upgrade support (installing a newer version
-replaces the old one; installing an older one is blocked) and an optional
-PATH entry controlled by the `ADDTOPATH` property.
+replaces the old one; installing an older one is blocked), an optional
+PATH entry controlled by the `ADDTOPATH` property (default 1) and, with
+`desktop_shortcut = .optional`, a desktop shortcut controlled by
+`DESKTOPSHORTCUT` (default 0). It installs to the same default folder as
+the EXE. The MSI shows Windows Installer's basic progress UI, not the
+EXE's wizard.
 
 ```bat
 msiexec /i myapp-1.2.0-windows-x86_64.msi /qn
-msiexec /i myapp-1.2.0-windows-x86_64.msi /qn ADDTOPATH=0 INSTALLDIR="D:\Apps\myapp"
+msiexec /i myapp-1.2.0-windows-x86_64.msi /qn ADDTOPATH=0 DESKTOPSHORTCUT=1 INSTALLDIR="D:\Apps\myapp"
 msiexec /x myapp-1.2.0-windows-x86_64.msi /qn
 ```
 

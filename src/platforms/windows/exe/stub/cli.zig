@@ -23,6 +23,21 @@ const Allocator = std.mem.Allocator;
 
 pub const PathMode = enum { never, optional, always };
 
+/// Whether the installer creates a desktop shortcut: never, when the user
+/// ticks the box (unticked by default; `/DESKTOP` on the command line), or
+/// always.
+pub const DesktopShortcut = enum { never, optional, always };
+
+/// The folder the default install directory is created in.
+pub const InstallRoot = enum {
+    /// `C:\Program Files` (the native one, also from an emulated process).
+    program_files,
+    /// `C:\ProgramData`.
+    program_data,
+    /// The root of the Windows drive, `C:\`.
+    system_drive,
+};
+
 /// File name of the uninstaller the installer copies into the install
 /// directory.
 pub const uninstaller_name = "uninstall.exe";
@@ -37,6 +52,8 @@ pub const Command = struct {
     /// Explicit PATH choice (`/PATH` or `/NOPATH`); null means "use the
     /// default for this installer".
     add_to_path: ?bool = null,
+    /// Explicit desktop shortcut choice (`/DESKTOP` or `/NODESKTOP`).
+    desktop_shortcut: ?bool = null,
     /// Internal (`/_cleanup=<dir>`): run as the temporary helper that
     /// removes the uninstaller and the install directory once the
     /// uninstaller has exited.
@@ -71,6 +88,8 @@ pub const ParseError = error{UnknownOption};
 ///   /D=<dir>     install directory
 ///   /PATH        add the install directory to the system PATH
 ///   /NOPATH      do not add it
+///   /DESKTOP     create a desktop shortcut
+///   /NODESKTOP   do not create one
 ///   /uninstall   remove the installed application (the default when the
 ///                program is run as uninstall.exe)
 ///   /?           show help
@@ -90,6 +109,10 @@ pub fn parse(args: []const []const u8) ParseError!Command {
             cmd.add_to_path = true;
         } else if (eqlIgnoreCase(a, "nopath")) {
             cmd.add_to_path = false;
+        } else if (eqlIgnoreCase(a, "desktop")) {
+            cmd.desktop_shortcut = true;
+        } else if (eqlIgnoreCase(a, "nodesktop")) {
+            cmd.desktop_shortcut = false;
         } else if (eqlIgnoreCase(a, "uninstall") or eqlIgnoreCase(a, "u")) {
             cmd.action = .uninstall;
         } else if (eqlIgnoreCase(a, "?") or eqlIgnoreCase(a, "h") or eqlIgnoreCase(a, "help")) {
@@ -112,6 +135,8 @@ pub const help_text =
     \\  /D=<dir>    Install directory
     \\  /PATH       Add the install directory to the system PATH
     \\  /NOPATH     Do not add the install directory to PATH
+    \\  /DESKTOP    Create a desktop shortcut
+    \\  /NODESKTOP  Do not create a desktop shortcut
     \\  /uninstall  Remove the application (the default for uninstall.exe)
     \\
     \\Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments
@@ -123,6 +148,104 @@ fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
 
 fn startsWithIgnoreCase(a: []const u8, prefix: []const u8) bool {
     return a.len >= prefix.len and std.ascii.eqlIgnoreCase(a[0..prefix.len], prefix);
+}
+
+/// The default install directory: `dir_name` (which may contain
+/// backslashes, such as `Acme\\Widget`) inside `root`, found from the
+/// environment.
+pub fn defaultInstallDir(gpa: Allocator, root: InstallRoot, env: *const std.process.Environ.Map, dir_name: []const u8) Allocator.Error![]u8 {
+    const base = switch (root) {
+        // ProgramW6432 is the native Program Files even from an emulated
+        // process; ProgramFiles is the fallback.
+        .program_files => env.get("ProgramW6432") orelse env.get("ProgramFiles") orelse "C:\\Program Files",
+        .program_data => env.get("ProgramData") orelse env.get("ALLUSERSPROFILE") orelse "C:\\ProgramData",
+        .system_drive => env.get("SystemDrive") orelse "C:",
+    };
+    return std.mem.concat(gpa, u8, &.{ std.mem.trimEnd(u8, base, "\\/"), "\\", dir_name });
+}
+
+/// The folder to install into after the user picks `picked` with Browse:
+/// the application's own folder (`leaf`) inside it, unless the user
+/// picked a folder of that name.
+pub fn browsedInstallDir(gpa: Allocator, picked: []const u8, leaf: []const u8) Allocator.Error![]u8 {
+    const trimmed = if (picked.len > 3) std.mem.trimEnd(u8, picked, "\\/") else picked;
+    if (std.ascii.eqlIgnoreCase(basenameWindows(trimmed), leaf)) return gpa.dupe(u8, trimmed);
+    const sep: []const u8 = if (trimmed.len > 0 and (trimmed[trimmed.len - 1] == '\\' or trimmed[trimmed.len - 1] == '/')) "" else "\\";
+    return std.mem.concat(gpa, u8, &.{ trimmed, sep, leaf });
+}
+
+/// The last component of an `install_dir_name` such as `Acme\\Widget`.
+pub fn installDirLeaf(dir_name: []const u8) []const u8 {
+    return basenameWindows(std.mem.trimEnd(u8, dir_name, "\\/"));
+}
+
+/// Whether `dir` is a usable install directory: a fully qualified path on
+/// a drive (`C:\\...`) or a network share (`\\\\server\\share\\...`),
+/// without characters Windows forbids in names.
+pub fn isValidInstallDir(dir: []const u8) bool {
+    const d = std.mem.trim(u8, dir, " ");
+    if (d.len != dir.len) return false;
+    var rest: []const u8 = undefined;
+    if (d.len >= 3 and std.ascii.isAlphabetic(d[0]) and d[1] == ':' and (d[2] == '\\' or d[2] == '/')) {
+        rest = d[3..];
+    } else if (std.mem.startsWith(u8, d, "\\\\") and d.len > 2) {
+        rest = d[2..];
+        // Server and share.
+        var it = std.mem.tokenizeAny(u8, rest, "\\/");
+        if (it.next() == null or it.next() == null) return false;
+    } else return false;
+    var it = std.mem.splitAny(u8, rest, "\\/");
+    while (it.next()) |seg| {
+        if (seg.len == 0) {
+            if (it.peek() == null) break; // trailing separator
+            return false;
+        }
+        if (std.mem.eql(u8, seg, ".") or std.mem.eql(u8, seg, "..")) return false;
+        if (seg[seg.len - 1] == '.' or seg[seg.len - 1] == ' ') return false;
+        for (seg) |c| switch (c) {
+            0...31, '<', '>', ':', '"', '|', '?', '*' => return false,
+            else => {},
+        };
+    }
+    return true;
+}
+
+/// The root of the volume `dir` is on, for free-space queries: `C:\\` or
+/// `\\\\server\\share\\`. Null if `dir` is not a full path.
+pub fn volumeRoot(dir: []const u8) ?[]const u8 {
+    if (dir.len >= 3 and std.ascii.isAlphabetic(dir[0]) and dir[1] == ':' and (dir[2] == '\\' or dir[2] == '/')) return dir[0..3];
+    if (!std.mem.startsWith(u8, dir, "\\\\")) return null;
+    var seps: usize = 0;
+    for (dir[2..], 2..) |c, i| {
+        if (c == '\\' or c == '/') {
+            seps += 1;
+            if (seps == 2) return dir[0 .. i + 1];
+        }
+    }
+    return null;
+}
+
+/// A byte count for people: `512 bytes`, `1.5 KB`, `24.0 MB`, `1.2 GB`.
+pub fn formatSize(buf: []u8, bytes: u64) []const u8 {
+    const units = [_][]const u8{ "KB", "MB", "GB", "TB" };
+    if (bytes < 1024) return std.fmt.bufPrint(buf, "{d} bytes", .{bytes}) catch buf[0..0];
+    var value: f64 = @floatFromInt(bytes);
+    var unit: usize = 0;
+    value /= 1024;
+    while (value >= 1024 and unit + 1 < units.len) : (unit += 1) value /= 1024;
+    return std.fmt.bufPrint(buf, "{d:.1} {s}", .{ value, units[unit] }) catch buf[0..0];
+}
+
+/// `text` with every line ending as CRLF, as a Windows edit control needs.
+pub fn crlf(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.ensureTotalCapacity(gpa, text.len + text.len / 32);
+    for (text, 0..) |c, i| {
+        if (c == '\n' and (i == 0 or text[i - 1] != '\r')) try out.append(gpa, '\r');
+        try out.append(gpa, c);
+    }
+    return out.toOwnedSlice(gpa);
 }
 
 /// Normalizes a directory for comparison: trims surrounding whitespace,
@@ -255,6 +378,8 @@ test "parse options" {
 
     try testing.expectEqual(Command.Action.help, (try parse(&.{"/?"})).action);
     try testing.expectEqual(true, (try parse(&.{"/path"})).add_to_path.?);
+    try testing.expectEqual(true, (try parse(&.{"/DESKTOP"})).desktop_shortcut.?);
+    try testing.expectEqual(false, (try parse(&.{"-nodesktop"})).desktop_shortcut.?);
     try testing.expectError(error.UnknownOption, parse(&.{"/bogus"}));
     try testing.expectError(error.UnknownOption, parse(&.{"stray"}));
 
@@ -264,6 +389,65 @@ test "parse options" {
     try testing.expectEqual(@as(usize, 1234), h.wait_handle.?);
     try testing.expectError(error.UnknownOption, parse(&.{"/_wait=x"}));
     try testing.expectError(error.UnknownOption, parse(&.{"/_cleanup="}));
+}
+
+test "install directories" {
+    const gpa = testing.allocator;
+    var env: std.process.Environ.Map = .init(gpa);
+    defer env.deinit();
+    try env.put("ProgramFiles", "C:\\Program Files (x86)");
+    try env.put("ProgramW6432", "C:\\Program Files");
+    try env.put("SystemDrive", "D:");
+
+    const pf = try defaultInstallDir(gpa, .program_files, &env, "Acme\\Widget");
+    defer gpa.free(pf);
+    try testing.expectEqualStrings("C:\\Program Files\\Acme\\Widget", pf);
+    const sd = try defaultInstallDir(gpa, .system_drive, &env, "Tools");
+    defer gpa.free(sd);
+    try testing.expectEqualStrings("D:\\Tools", sd);
+    const pd = try defaultInstallDir(gpa, .program_data, &env, "App");
+    defer gpa.free(pd);
+    try testing.expectEqualStrings("C:\\ProgramData\\App", pd);
+
+    try testing.expectEqualStrings("Widget", installDirLeaf("Acme\\Widget"));
+    const b1 = try browsedInstallDir(gpa, "D:\\Apps", "Widget");
+    defer gpa.free(b1);
+    try testing.expectEqualStrings("D:\\Apps\\Widget", b1);
+    const b2 = try browsedInstallDir(gpa, "D:\\Apps\\widget\\", "Widget");
+    defer gpa.free(b2);
+    try testing.expectEqualStrings("D:\\Apps\\widget", b2);
+    const b3 = try browsedInstallDir(gpa, "E:\\", "Widget");
+    defer gpa.free(b3);
+    try testing.expectEqualStrings("E:\\Widget", b3);
+
+    try testing.expect(isValidInstallDir("C:\\Program Files\\App"));
+    try testing.expect(isValidInstallDir("d:/apps/app/"));
+    try testing.expect(isValidInstallDir("\\\\server\\share\\App"));
+    try testing.expect(!isValidInstallDir("App"));
+    try testing.expect(!isValidInstallDir("C:App"));
+    try testing.expect(!isValidInstallDir("C:\\a\\..\\b"));
+    try testing.expect(!isValidInstallDir("C:\\a\\\\b"));
+    try testing.expect(!isValidInstallDir("C:\\what?"));
+    try testing.expect(!isValidInstallDir(" C:\\x"));
+    try testing.expect(!isValidInstallDir("\\\\server"));
+}
+
+test "volumeRoot" {
+    try testing.expectEqualStrings("C:\\", volumeRoot("C:\\Program Files\\App").?);
+    try testing.expectEqualStrings("\\\\srv\\share\\", volumeRoot("\\\\srv\\share\\App").?);
+    try testing.expect(volumeRoot("\\\\srv\\share") == null);
+    try testing.expect(volumeRoot("App") == null);
+}
+
+test "formatSize and crlf" {
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("512 bytes", formatSize(&buf, 512));
+    try testing.expectEqualStrings("1.5 KB", formatSize(&buf, 1536));
+    try testing.expectEqualStrings("24.0 MB", formatSize(&buf, 24 * 1024 * 1024));
+    const gpa = testing.allocator;
+    const t = try crlf(gpa, "a\nb\r\nc\n");
+    defer gpa.free(t);
+    try testing.expectEqualStrings("a\r\nb\r\nc\r\n", t);
 }
 
 test "uninstall.exe uninstalls by default" {

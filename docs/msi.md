@@ -52,8 +52,11 @@ cabinet are stored as separate streams.
   stable key path. Component GUIDs are UUIDv5 values derived from the
   upgrade code, platform and file path, so they stay stable across
   versions as the component rules require.
-- `INSTALLDIR` is `ProgramFiles64Folder\<install dir>`, with 8.3 short
-  names generated for every directory and file.
+- `INSTALLDIR` is `<root>\<install dir>`, where the root is
+  `ProgramFiles64Folder`, `CommonAppDataFolder` or `WindowsVolume`
+  (`install_root`). A nested install dir (`Acme\Widget`) gets one
+  `Directory` row per folder. 8.3 short names are generated for every
+  directory and file.
 - The cabinet is stored as stream `product.cab` and referenced from the
   `Media` table as `#product.cab`.
 - **Upgrades.** The product code is derived from the upgrade code, version
@@ -65,6 +68,10 @@ cabinet are stored as separate streams.
   `[INSTALLDIR]` to the end of the system `Path` (`=-*Path`,
   `[~];[INSTALLDIR]`), removed on uninstall. For `.optional` it is
   conditioned on the public `ADDTOPATH` property, default `1`.
+- **Shortcuts.** The Start Menu shortcut belongs to the component of the
+  file it opens. The desktop shortcut has its own component, keyed by a
+  registry value, so that `.optional` can condition it on the public
+  `DESKTOPSHORTCUT` property (default `0`).
 - An Apps & Features icon (`ARPPRODUCTICON`) is added when `icon` is set.
 
 ## Verification

@@ -22,6 +22,9 @@
 //! install directory as `uninstall.exe`; run under that name, or with
 //! `/uninstall`, it removes the application again.
 //!
+//! Run normally it shows a wizard (`wizard.zig`); with `/S` it works
+//! silently and reports through its exit code and standard error.
+//!
 //! The installer installs per machine, so its manifest requests
 //! administrator rights and Windows shows a UAC prompt when it starts.
 
@@ -31,6 +34,7 @@ const zstaller = @import("zstaller");
 const config = @import("config");
 const payload_bytes = @import("payload").bytes;
 const w32 = @import("win32.zig");
+const wizard = @import("wizard.zig");
 
 const cli = zstaller.exe_cli;
 const payload = zstaller.exe_payload;
@@ -40,34 +44,70 @@ const Io = std.Io;
 const manifest_name = ".zstaller-files";
 const uninstaller_name = cli.uninstaller_name;
 const uninstall_key_prefix = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\";
+pub const uninstall_key = uninstall_key_prefix ++ config.registry_key;
 const environment_key = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
 
-const ExitCode = enum(u8) { success = 0, failure = 1, cancelled = 2, usage = 3 };
+pub const ExitCode = enum(u8) { success = 0, failure = 1, cancelled = 2, usage = 3 };
 
-const State = struct {
+pub const State = struct {
     gpa: Allocator,
     io: Io,
     env: *std.process.Environ.Map,
     silent: bool,
+    /// The wizard window, which owns any message box.
+    owner: ?w32.HWND = null,
+    /// What went wrong, set by `report` for the caller to show.
+    failure: ?[]const u8 = null,
 
-    fn message(s: State, text: []const u8, icon: u32) void {
+    pub fn message(s: *const State, text: []const u8, icon: u32) void {
         if (s.silent) {
             std.debug.print("{s}\n", .{text});
             return;
         }
-        _ = messageBox(s.gpa, text, w32.MB_OK | icon);
+        _ = messageBox(s.gpa, s.owner, text, w32.MB_OK | icon);
     }
 
-    fn confirm(s: State, text: []const u8) bool {
+    pub fn confirm(s: *const State, text: []const u8) bool {
         if (s.silent) return true;
-        return messageBox(s.gpa, text, w32.MB_YESNO | w32.MB_ICONQUESTION) == w32.IDYES;
+        return messageBox(s.gpa, s.owner, text, w32.MB_YESNO | w32.MB_ICONQUESTION) == w32.IDYES;
     }
 
-    fn fail(s: State, comptime fmt: []const u8, args: anytype) ExitCode {
+    pub fn fail(s: *const State, comptime fmt: []const u8, args: anytype) ExitCode {
         const text = std.fmt.allocPrint(s.gpa, fmt, args) catch "Installation failed.";
         s.message(text, w32.MB_ICONERROR);
         return .failure;
     }
+
+    /// Records why an install or uninstall step failed and returns
+    /// `error.Reported`; the caller shows `failure`.
+    pub fn report(s: *State, comptime fmt: []const u8, args: anytype) error{ Reported, OutOfMemory } {
+        s.failure = try std.fmt.allocPrint(s.gpa, fmt, args);
+        return error.Reported;
+    }
+
+    /// The text to show for an error from `applyInstall` or
+    /// `applyUninstall`.
+    pub fn failureText(s: *const State, err: anyerror, comptime what: []const u8) []const u8 {
+        if (err == error.Reported) if (s.failure) |f| return f;
+        return std.fmt.allocPrint(s.gpa, what ++ " failed: {t}", .{err}) catch what ++ " failed.";
+    }
+};
+
+/// Reports progress of `applyInstall` and `applyUninstall`.
+pub const Progress = struct {
+    ctx: *anyopaque,
+    func: *const fn (ctx: *anyopaque, done: u64, total: u64, item: []const u8) void,
+
+    fn step(p: ?Progress, done: u64, total: u64, item: []const u8) void {
+        if (p) |x| x.func(x.ctx, done, total, item);
+    }
+};
+
+/// What to install, and where.
+pub const Plan = struct {
+    dir: []const u8,
+    add_to_path: bool,
+    desktop_shortcut: bool,
 };
 
 pub fn main(init: std.process.Init) u8 {
@@ -87,35 +127,98 @@ pub fn main(init: std.process.Init) u8 {
             state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ cli.help_text, w32.MB_ICONINFORMATION);
             break :blk .success;
         },
-        .install => install(state, cmd, self_path) catch |err| state.fail("Installation failed: {t}", .{err}),
-        .uninstall => uninstall(state, self_path) catch |err| state.fail("Uninstall failed: {t}", .{err}),
-        .cleanup => cleanup(state, cmd.cleanup_dir.?, cmd.wait_handle, self_path),
+        .install => if (state.silent)
+            installSilent(&state, cmd, self_path) catch |err| state.fail("Installation failed: {t}", .{err})
+        else
+            wizard.runInstall(&state, cmd, self_path),
+        .uninstall => blk: {
+            const dir = uninstallDir(&state, self_path) orelse
+                break :blk state.fail(config.display_name ++ " is not installed.", .{});
+            break :blk if (state.silent)
+                uninstallSilent(&state, dir, self_path)
+            else
+                wizard.runUninstall(&state, dir, self_path);
+        },
+        .cleanup => cleanup(&state, cmd.cleanup_dir.?, cmd.wait_handle, self_path),
     };
     return @intFromEnum(code);
 }
 
-fn install(s: State, cmd: cli.Command, self_path: []const u8) !ExitCode {
-    const default_dir = try defaultInstallDir(s);
-    const dir = cmd.install_dir orelse default_dir;
-    if (!std.fs.path.isAbsolute(dir)) return s.fail("The install directory must be an absolute path: {s}", .{dir});
-
-    const add_to_path = switch (config.add_to_path) {
-        .never => false,
-        .always => true,
-        .optional => cmd.add_to_path orelse if (s.silent) false else s.confirm(
-            try std.fmt.allocPrint(s.gpa, "Add {s} to the system PATH so " ++ config.exe_name ++ " can be run from any terminal?", .{dir}),
-        ),
-    };
-    if (!s.confirm(try std.fmt.allocPrint(s.gpa, "Install " ++ config.display_name ++ " " ++ config.version ++ " to {s}?", .{dir}))) {
-        return .cancelled;
+/// The install directory a new installation goes to: the one an earlier
+/// version was installed in, else the configured default.
+pub fn defaultInstallDir(s: *const State) ![]const u8 {
+    if (readString(s.gpa, uninstall_key, "InstallLocation")) |previous| {
+        if (cli.isValidInstallDir(previous)) return previous;
     }
+    return cli.defaultInstallDir(s.gpa, @field(cli.InstallRoot, @tagName(config.install_root)), s.env, config.install_dir_name);
+}
 
+/// The version already installed, if any.
+pub fn installedVersion(s: *const State) ?[]const u8 {
+    if (readString(s.gpa, uninstall_key, "InstallLocation") == null) return null;
+    return readString(s.gpa, uninstall_key, "DisplayVersion");
+}
+
+/// Size of the installed files, from the payload header.
+pub fn payloadSize() u64 {
+    if (payload_bytes.len < 16) return 0;
+    return std.mem.readInt(u64, payload_bytes[8..16], .little);
+}
+
+fn installSilent(s: *State, cmd: cli.Command, self_path: []const u8) !ExitCode {
+    const dir = cmd.install_dir orelse try defaultInstallDir(s);
+    if (!cli.isValidInstallDir(dir)) return s.fail("The install directory must be a full path, such as C:\\Apps\\Example: {s}", .{dir});
+    const plan: Plan = .{
+        .dir = dir,
+        .add_to_path = switch (config.add_to_path) {
+            .never => false,
+            .always => true,
+            .optional => cmd.add_to_path orelse false,
+        },
+        .desktop_shortcut = switch (config.desktop_shortcut) {
+            .never => false,
+            .always => true,
+            .optional => cmd.desktop_shortcut orelse false,
+        },
+    };
     if (try ensureNotRunning(s, dir, .install)) |code| return code;
+    applyInstall(s, plan, self_path, null) catch |err| {
+        s.message(s.failureText(err, "Installation"), w32.MB_ICONERROR);
+        return .failure;
+    };
+    s.message(config.display_name ++ " " ++ config.version ++ " was installed successfully.", w32.MB_ICONINFORMATION);
+    return .success;
+}
 
+fn uninstallSilent(s: *State, dir: []const u8, self_path: []const u8) ExitCode {
+    if (ensureNotRunning(s, dir, .uninstall) catch |err| return s.fail("Uninstall failed: {t}", .{err})) |code| return code;
+    applyUninstall(s, dir, self_path, null) catch |err| {
+        s.message(s.failureText(err, "Uninstall"), w32.MB_ICONERROR);
+        return .failure;
+    };
+    s.message(config.display_name ++ " was removed.", w32.MB_ICONINFORMATION);
+    return .success;
+}
+
+/// The directory to uninstall from. The installed uninstaller removes the
+/// directory it is in; the setup program run with /uninstall finds the
+/// installation in the registry.
+fn uninstallDir(s: *const State, self_path: []const u8) ?[]const u8 {
+    if (cli.defaultAction(self_path) == .uninstall) return std.fs.path.dirname(self_path);
+    return readString(s.gpa, uninstall_key, "InstallLocation");
+}
+
+/// Installs the payload as `plan` says. Errors that need explaining are
+/// recorded with `State.report`.
+pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Progress) !void {
+    const dir = plan.dir;
+    const total = payloadSize();
+    Progress.step(progress, 0, total, "Preparing files...");
     var decoded = try payload.decode(s.gpa, payload_bytes);
     defer decoded.deinit(s.gpa);
 
-    try Io.Dir.cwd().createDirPath(s.io, dir);
+    Io.Dir.cwd().createDirPath(s.io, dir) catch |err|
+        return s.report("Could not create the folder {s}: {t}", .{ dir, err });
     var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
     defer install_dir.close(s.io);
 
@@ -133,53 +236,56 @@ fn install(s: State, cmd: cli.Command, self_path: []const u8) !ExitCode {
     var total_bytes: u64 = 0;
     var manifest: std.ArrayList(u8) = .empty;
     for (decoded.entries) |e| {
+        Progress.step(progress, total_bytes, total, e.path);
         if (std.fs.path.dirnamePosix(e.path)) |parent| try install_dir.createDirPath(s.io, parent);
-        try install_dir.writeFile(s.io, .{ .sub_path = e.path, .data = e.data });
+        install_dir.writeFile(s.io, .{ .sub_path = e.path, .data = e.data }) catch |err| switch (err) {
+            error.AccessDenied, error.FileBusy => return s.report(
+                "{s}\\{s} is in use by another program, so it cannot be replaced.\n\n" ++
+                    "Close the program that is using it, then run Setup again.",
+                .{ dir, e.path },
+            ),
+            else => return err,
+        };
         total_bytes += e.data.len;
         try manifest.appendSlice(s.gpa, e.path);
         try manifest.append(s.gpa, '\n');
     }
     try install_dir.writeFile(s.io, .{ .sub_path = manifest_name, .data = manifest.items });
 
+    Progress.step(progress, total_bytes, total, "Creating shortcuts...");
     const uninstaller_path = try std.fs.path.join(s.gpa, &.{ dir, uninstaller_name });
     if (!std.ascii.eqlIgnoreCase(self_path, uninstaller_path)) {
         try Io.Dir.copyFileAbsolute(self_path, uninstaller_path, s.io, .{});
     }
 
     const app_path = try std.fs.path.join(s.gpa, &.{ dir, config.exe_name });
-    const shortcut_path: ?[]const u8 = if (config.start_menu_shortcut) blk: {
-        const icon = if (config.has_icon) uninstaller_path else app_path;
-        break :blk createShortcut(s, app_path, dir, icon) catch |err| sc: {
+    const icon = if (config.has_icon) uninstaller_path else app_path;
+    var shortcuts: Shortcuts = .{};
+    if (config.start_menu_shortcut) {
+        shortcuts.start_menu = createShortcut(s, try startMenuDir(s), app_path, dir, icon) catch |err| sc: {
             // The application still works without its shortcut.
             std.debug.print("could not create the Start Menu shortcut: {t}\n", .{err});
             break :sc null;
         };
-    } else null;
-
-    try registerUninstall(s, dir, uninstaller_path, total_bytes, add_to_path, shortcut_path);
-    if (add_to_path) try editSystemPath(s, dir, .add);
-
-    const done = config.display_name ++ " " ++ config.version ++ " was installed successfully.";
-    if (s.silent) {
-        s.message(done, w32.MB_ICONINFORMATION);
-    } else if (s.confirm(done ++ "\n\nLaunch " ++ config.display_name ++ " now?")) {
-        launch(s, app_path, dir);
     }
-    return .success;
+    if (plan.desktop_shortcut) {
+        shortcuts.desktop = createShortcut(s, try desktopDir(s), app_path, dir, icon) catch |err| sc: {
+            std.debug.print("could not create the desktop shortcut: {t}\n", .{err});
+            break :sc null;
+        };
+    }
+
+    Progress.step(progress, total_bytes, total, "Registering " ++ config.display_name ++ "...");
+    try registerUninstall(s, dir, uninstaller_path, total_bytes, plan.add_to_path, shortcuts);
+    if (plan.add_to_path) try editSystemPath(s, dir, .add);
+    Progress.step(progress, total, total, "");
 }
 
-fn uninstall(s: State, self_path: []const u8) !ExitCode {
-    // The installed uninstaller removes the directory it is in. The setup
-    // program run with /uninstall finds the installation in the registry.
-    const dir = if (cli.defaultAction(self_path) == .uninstall)
-        std.fs.path.dirname(self_path) orelse return error.NoInstallDir
-    else
-        readString(s.gpa, uninstall_key_prefix ++ config.registry_key, "InstallLocation") orelse
-            return s.fail(config.display_name ++ " is not installed.", .{});
-    if (!s.confirm("Remove " ++ config.display_name ++ " and all of its files?")) return .cancelled;
-    if (try ensureNotRunning(s, dir, .uninstall)) |code| return code;
-
-    var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
+/// Removes the installation in `dir`. Errors that need explaining are
+/// recorded with `State.report`.
+pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progress: ?Progress) !void {
+    var install_dir = Io.Dir.openDirAbsolute(s.io, dir, .{}) catch |err|
+        return s.report("Could not open {s}: {t}", .{ dir, err });
     defer install_dir.close(s.io);
 
     // Prefer the manifest the installer wrote; fall back to this
@@ -191,21 +297,25 @@ fn uninstall(s: State, self_path: []const u8) !ExitCode {
         break :blk list;
     };
 
-    if (readDword(uninstall_key_prefix ++ config.registry_key, "ZstallerAddedToPath", s.gpa) == 1) {
+    if (readDword(uninstall_key, "ZstallerAddedToPath", s.gpa) == 1) {
         editSystemPath(s, dir, .remove) catch {};
     }
 
-    for (paths) |p| install_dir.deleteFile(s.io, p) catch |err| switch (err) {
-        error.FileNotFound => {},
-        // A program that `ensureNotRunning` cannot see, such as an editor,
-        // has the file open.
-        error.AccessDenied, error.FileBusy => return s.fail(
-            "Uninstall failed: {s}\\{s} is in use by another program, so it cannot be removed.\n\n" ++
-                "Close the program that is using it, then run the uninstaller again.",
-            .{ dir, p },
-        ),
-        else => return err,
-    };
+    for (paths, 0..) |p, i| {
+        Progress.step(progress, i, paths.len, p);
+        install_dir.deleteFile(s.io, p) catch |err| switch (err) {
+            error.FileNotFound => {},
+            // A program that `ensureNotRunning` cannot see, such as an
+            // editor, has the file open.
+            error.AccessDenied, error.FileBusy => return s.report(
+                "{s}\\{s} is in use by another program, so it cannot be removed.\n\n" ++
+                    "Close the program that is using it, then run the uninstaller again.",
+                .{ dir, p },
+            ),
+            else => return err,
+        };
+    }
+    Progress.step(progress, paths.len, paths.len, "Removing shortcuts...");
     install_dir.deleteFile(s.io, manifest_name) catch {};
     // Remove now-empty parent directories, deepest first.
     var i = paths.len;
@@ -217,10 +327,12 @@ fn uninstall(s: State, self_path: []const u8) !ExitCode {
         }
     }
 
-    if (readString(s.gpa, uninstall_key_prefix ++ config.registry_key, "ZstallerShortcut")) |shortcut| {
-        Io.Dir.deleteFileAbsolute(s.io, shortcut) catch {};
+    for ([_][]const u8{ "ZstallerShortcut", "ZstallerDesktopShortcut" }) |value| {
+        if (readString(s.gpa, uninstall_key, value)) |shortcut| {
+            Io.Dir.deleteFileAbsolute(s.io, shortcut) catch {};
+        }
     }
-    deleteKey(s.gpa, uninstall_key_prefix ++ config.registry_key);
+    deleteKey(s.gpa, uninstall_key);
 
     // Last, the uninstaller itself and the install directory. Windows
     // cannot delete a running executable, so when that is this process a
@@ -234,19 +346,10 @@ fn uninstall(s: State, self_path: []const u8) !ExitCode {
         Io.Dir.deleteFileAbsolute(s.io, uninstaller_path) catch {};
         Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
     }
-
-    s.message(config.display_name ++ " was removed.", w32.MB_ICONINFORMATION);
-    return .success;
+    Progress.step(progress, paths.len, paths.len, "");
 }
 
-fn defaultInstallDir(s: State) ![]const u8 {
-    // ProgramW6432 is the native Program Files even from an emulated
-    // process; ProgramFiles is the fallback.
-    const base = s.env.get("ProgramW6432") orelse s.env.get("ProgramFiles") orelse "C:\\Program Files";
-    return std.fs.path.join(s.gpa, &.{ base, config.install_dir_name });
-}
-
-const Operation = enum { install, uninstall };
+pub const Operation = enum { install, uninstall };
 
 /// Windows cannot replace or delete the files of a running program, so
 /// install and uninstall check first, before they change anything, for
@@ -254,7 +357,7 @@ const Operation = enum { install, uninstall };
 /// else the exit code to stop with. With `config.close_running_apps` the
 /// user is asked to force-quit them (silent runs do so without asking);
 /// without it, the user is told to close them.
-fn ensureNotRunning(s: State, dir: []const u8, op: Operation) !?ExitCode {
+pub fn ensureNotRunning(s: *const State, dir: []const u8, op: Operation) !?ExitCode {
     const running = try findRunning(s, dir);
     if (running.len == 0) return null;
     const list = try cli.processList(s.gpa, running);
@@ -290,7 +393,7 @@ fn ensureNotRunning(s: State, dir: []const u8, op: Operation) !?ExitCode {
 /// Other processes whose executable is inside `dir`. Processes this
 /// process cannot query (protected system processes) are skipped; none of
 /// them run from an application's install directory.
-fn findRunning(s: State, dir: []const u8) ![]const cli.RunningProcess {
+fn findRunning(s: *const State, dir: []const u8) ![]const cli.RunningProcess {
     const snapshot = w32.CreateToolhelp32Snapshot(w32.TH32CS_SNAPPROCESS, 0);
     if (snapshot == w32.INVALID_HANDLE_VALUE) return &.{};
     defer _ = w32.CloseHandle(snapshot);
@@ -334,13 +437,18 @@ fn forceQuit(pid: w32.DWORD) bool {
     return w32.WaitForSingleObject(process, 10_000) == w32.WAIT_OBJECT_0;
 }
 
-fn readManifest(s: State, dir: Io.Dir) ?[]const []const u8 {
+fn readManifest(s: *const State, dir: Io.Dir) ?[]const []const u8 {
     const text = dir.readFileAlloc(s.io, manifest_name, s.gpa, .limited(16 << 20)) catch return null;
     return cli.manifestPaths(s.gpa, text) catch null;
 }
 
-fn registerUninstall(s: State, dir: []const u8, uninstaller: []const u8, total_bytes: u64, added_to_path: bool, shortcut: ?[]const u8) !void {
-    const key = try createKey(s.gpa, uninstall_key_prefix ++ config.registry_key);
+const Shortcuts = struct {
+    start_menu: ?[]const u8 = null,
+    desktop: ?[]const u8 = null,
+};
+
+fn registerUninstall(s: *const State, dir: []const u8, uninstaller: []const u8, total_bytes: u64, added_to_path: bool, shortcuts: Shortcuts) !void {
+    const key = try createKey(s.gpa, uninstall_key);
     defer _ = w32.RegCloseKey(key);
     const quoted = try std.fmt.allocPrint(s.gpa, "\"{s}\" /uninstall", .{uninstaller});
     try setString(s.gpa, key, "DisplayName", config.display_name, w32.REG_SZ);
@@ -354,16 +462,26 @@ fn registerUninstall(s: State, dir: []const u8, uninstaller: []const u8, total_b
     try setDword(s.gpa, key, "NoRepair", 1);
     try setDword(s.gpa, key, "EstimatedSize", @intCast(@min(total_bytes / 1024, std.math.maxInt(u32))));
     try setDword(s.gpa, key, "ZstallerAddedToPath", @intFromBool(added_to_path));
-    if (shortcut) |path| try setString(s.gpa, key, "ZstallerShortcut", path, w32.REG_SZ);
+    if (shortcuts.start_menu) |path| try setString(s.gpa, key, "ZstallerShortcut", path, w32.REG_SZ);
+    if (shortcuts.desktop) |path| try setString(s.gpa, key, "ZstallerDesktopShortcut", path, w32.REG_SZ);
 }
 
-/// Writes `<ProgramData>\Microsoft\Windows\Start Menu\Programs\<name>.lnk`
-/// for all users and returns its path.
-fn createShortcut(s: State, target: []const u8, work_dir: []const u8, icon: []const u8) ![]const u8 {
+/// The Start Menu programs folder for all users.
+fn startMenuDir(s: *const State) ![]const u8 {
     const program_data = s.env.get("ProgramData") orelse s.env.get("ALLUSERSPROFILE") orelse "C:\\ProgramData";
-    const programs = try std.fs.path.join(s.gpa, &.{ program_data, "Microsoft", "Windows", "Start Menu", "Programs" });
-    try Io.Dir.cwd().createDirPath(s.io, programs);
-    const link_path = try std.fs.path.join(s.gpa, &.{ programs, config.display_name ++ ".lnk" });
+    return std.fs.path.join(s.gpa, &.{ program_data, "Microsoft", "Windows", "Start Menu", "Programs" });
+}
+
+/// The desktop folder for all users.
+fn desktopDir(s: *const State) ![]const u8 {
+    const public = s.env.get("PUBLIC") orelse "C:\\Users\\Public";
+    return std.fs.path.join(s.gpa, &.{ public, "Desktop" });
+}
+
+/// Writes `<folder>\<name>.lnk` and returns its path.
+fn createShortcut(s: *const State, folder: []const u8, target: []const u8, work_dir: []const u8, icon: []const u8) ![]const u8 {
+    try Io.Dir.cwd().createDirPath(s.io, folder);
+    const link_path = try std.fs.path.join(s.gpa, &.{ folder, config.display_name ++ ".lnk" });
 
     const hr_init = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
     if (hr_init < 0) return error.ComInitFailed;
@@ -388,7 +506,7 @@ fn createShortcut(s: State, target: []const u8, work_dir: []const u8, icon: []co
 }
 
 /// Starts the installed application in its own window.
-fn launch(s: State, app_path: []const u8, dir: []const u8) void {
+pub fn launch(s: *const State, app_path: []const u8, dir: []const u8) void {
     const file_w = wide(s.gpa, app_path) catch return;
     const dir_w = wide(s.gpa, dir) catch return;
     const verb_w = wide(s.gpa, "open") catch return;
@@ -401,7 +519,7 @@ fn wide(gpa: Allocator, text: []const u8) ![:0]const u16 {
 
 const PathEdit = enum { add, remove };
 
-fn editSystemPath(s: State, dir: []const u8, edit: PathEdit) !void {
+fn editSystemPath(s: *const State, dir: []const u8, edit: PathEdit) !void {
     const key = try createKey(s.gpa, environment_key);
     defer _ = w32.RegCloseKey(key);
     const current = try queryString(s.gpa, key, "Path");
@@ -419,7 +537,7 @@ fn editSystemPath(s: State, dir: []const u8, edit: PathEdit) !void {
 /// hidden helper (`/_cleanup`) with an inherited handle to this process;
 /// it waits on that handle, so it works however long this process stays
 /// open (for example while the final message box is shown).
-fn removeAfterExit(s: State, self_path: []const u8, dir: []const u8) !void {
+fn removeAfterExit(s: *const State, self_path: []const u8, dir: []const u8) !void {
     const temp = s.env.get("TEMP") orelse s.env.get("TMP") orelse return error.NoTempDir;
     const pid = w32.GetCurrentProcessId();
     const helper_name = try std.fmt.allocPrint(s.gpa, "zstaller-uninstall-{d}.exe", .{pid});
@@ -452,7 +570,7 @@ fn removeAfterExit(s: State, self_path: []const u8, dir: []const u8) !void {
 /// uninstaller to exit, deletes it and the install directory (if nothing
 /// else is left in it), then has Windows delete this temporary copy at the
 /// next restart, as a running program cannot delete itself.
-fn cleanup(s: State, dir: []const u8, wait_handle: ?usize, self_path: []const u8) ExitCode {
+fn cleanup(s: *const State, dir: []const u8, wait_handle: ?usize, self_path: []const u8) ExitCode {
     if (wait_handle) |h| {
         if (h != 0) {
             const handle: w32.HANDLE = @ptrFromInt(h);
@@ -494,10 +612,10 @@ fn cleanup(s: State, dir: []const u8, wait_handle: ?usize, self_path: []const u8
     return .success;
 }
 
-fn messageBox(gpa: Allocator, text: []const u8, flags: u32) c_int {
+pub fn messageBox(gpa: Allocator, owner: ?w32.HWND, text: []const u8, flags: u32) c_int {
     const text_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, text) catch return 0;
     const title_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, config.display_name ++ " Setup") catch return 0;
-    return w32.MessageBoxW(null, text_w.ptr, title_w.ptr, flags);
+    return w32.MessageBoxW(owner, text_w.ptr, title_w.ptr, flags);
 }
 
 fn createKey(gpa: Allocator, sub_key: []const u8) !w32.HKEY {
@@ -544,7 +662,7 @@ fn queryString(gpa: Allocator, key: w32.HKEY, name: []const u8) ![]const u8 {
     return std.unicode.wtf16LeToWtf8Alloc(gpa, buf[0..len]);
 }
 
-fn readString(gpa: Allocator, sub_key: []const u8, name: []const u8) ?[]const u8 {
+pub fn readString(gpa: Allocator, sub_key: []const u8, name: []const u8) ?[]const u8 {
     const sub_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key) catch return null;
     var key: w32.HKEY = undefined;
     if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;

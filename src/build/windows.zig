@@ -20,7 +20,8 @@ const std = @import("std");
 const api = @import("api.zig");
 const naming = @import("../naming.zig");
 const uuid = @import("../uuid.zig");
-const PathMode = @import("../platforms/windows/exe/stub/cli.zig").PathMode;
+const cli = @import("../platforms/windows/exe/stub/cli.zig");
+const payload = @import("../platforms/windows/exe/payload.zig");
 const Build = std.Build;
 const LazyPath = Build.LazyPath;
 
@@ -42,6 +43,11 @@ const installer_manifest =
     \\      </requestedPrivileges>
     \\    </security>
     \\  </trustInfo>
+    \\  <dependency>
+    \\    <dependentAssembly>
+    \\      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    \\    </dependentAssembly>
+    \\  </dependency>
     \\  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     \\    <application>
     \\      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
@@ -49,17 +55,34 @@ const installer_manifest =
     \\  </compatibility>
     \\  <application xmlns="urn:schemas-microsoft-com:asm.v3">
     \\    <windowsSettings>
-    \\      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+    \\      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    \\      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
     \\    </windowsSettings>
     \\  </application>
     \\</assembly>
     \\
 ;
 
+/// The install directory name, checked: folders separated by '\\' (or
+/// '/'), each a valid Windows file name.
+fn installDirName(ctx: *const api.Context) ?[]const u8 {
+    const name = ctx.options.windows.install_dir_name orelse ctx.displayName();
+    var it = std.mem.splitAny(u8, name, "\\/");
+    while (it.next()) |seg| {
+        if (!payload.isSafePath(seg)) {
+            ctx.fail("windows.install_dir_name '{s}' is not a valid folder name", .{name});
+            return null;
+        }
+    }
+    return std.mem.replaceOwned(u8, ctx.b.allocator, name, "/", "\\") catch @panic("OOM");
+}
+
 fn addExe(ctx: *const api.Context) ?LazyPath {
     const b = ctx.b;
     const o = ctx.options;
+    const w = o.windows.wizard;
     const exe_name = ctx.binary.out_filename;
+    const dir_name = installDirName(ctx) orelse return null;
 
     const payload_run = ctx.runPack("payload");
     payload_run.addArg("--out");
@@ -73,9 +96,31 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         payload_run.addArg(f.dest);
     }
 
+    // Wizard artwork and license text, decoded and checked at build time.
+    const wizard_run = ctx.runPack("wizard");
+    wizard_run.addArg("--out");
+    const wizard_bin = wizard_run.addOutputFileArg("wizard.bin");
+    if (w.banner_image) |img| {
+        wizard_run.addArgs(&.{ "--banner-option", "windows.wizard.banner_image", "--banner" });
+        wizard_run.addFileArg(img);
+    }
+    if (w.welcome_image) |img| {
+        wizard_run.addArgs(&.{ "--welcome-option", "windows.wizard.welcome_image", "--welcome" });
+        wizard_run.addFileArg(img);
+    }
+    if (w.license_file) |file| {
+        wizard_run.addArg("--license");
+        wizard_run.addFileArg(file);
+    }
+
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(payload_bin, "payload.bin");
-    const payload_zig = wf.add("payload.zig", "pub const bytes = @embedFile(\"payload.bin\");\n");
+    _ = wf.addCopyFile(wizard_bin, "wizard.bin");
+    const payload_zig = wf.add("payload.zig",
+        \\pub const bytes = @embedFile("payload.bin");
+        \\pub const wizard = @embedFile("wizard.bin");
+        \\
+    );
     const manifest = wf.add("installer.manifest", installer_manifest);
 
     const config = b.addOptions();
@@ -84,13 +129,28 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "version", ctx.meta.version);
     config.addOption([]const u8, "publisher", o.windows.publisher orelse "");
     config.addOption([]const u8, "exe_name", exe_name);
-    config.addOption([]const u8, "install_dir_name", o.windows.install_dir_name orelse ctx.displayName());
+    config.addOption([]const u8, "install_dir_name", dir_name);
+    config.addOption(cli.InstallRoot, "install_root", switch (o.windows.install_root) {
+        .program_files => .program_files,
+        .program_data => .program_data,
+        .system_drive => .system_drive,
+    });
+    config.addOption(bool, "allow_install_dir_change", o.windows.allow_install_dir_change);
+    config.addOption(cli.DesktopShortcut, "desktop_shortcut", switch (o.windows.desktop_shortcut) {
+        .never => .never,
+        .optional => .optional,
+        .always => .always,
+    });
+    config.addOption(u32, "accent_color", w.accent_color);
+    config.addOption(?[]const u8, "welcome_text", w.welcome_text);
+    config.addOption(?[]const u8, "finish_text", w.finish_text);
+    config.addOption(bool, "launch_on_finish", w.launch_on_finish);
     config.addOption([]const u8, "registry_key", b.fmt("zstaller.{s}", .{ctx.meta.name}));
     config.addOption(bool, "start_menu_shortcut", o.windows.start_menu_shortcut);
     config.addOption(bool, "close_running_apps", o.windows.close_running_apps);
     config.addOption(bool, "has_icon", o.icon != null);
     config.addOption([]const u8, "description", ctx.meta.description orelse "");
-    config.addOption(PathMode, "add_to_path", switch (o.windows.add_to_path) {
+    config.addOption(cli.PathMode, "add_to_path", switch (o.windows.add_to_path) {
         .never => .never,
         .optional => .optional,
         .always => .always,
@@ -111,6 +171,8 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     stub_mod.linkSystemLibrary("user32", .{});
     stub_mod.linkSystemLibrary("ole32", .{});
     stub_mod.linkSystemLibrary("shell32", .{});
+    stub_mod.linkSystemLibrary("gdi32", .{});
+    stub_mod.linkSystemLibrary("comctl32", .{});
     if (o.icon) |icon| {
         _ = wf.addCopyFile(icon, "app.ico");
         const rc = wf.add("installer.rc", "1 ICON \"app.ico\"\n");
@@ -133,6 +195,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         ctx.fail("a description is required for MSI packages; add .description to build.zig.zon", .{});
         return null;
     };
+    const dir_name = installDirName(ctx) orelse return null;
     const upgrade_code = if (o.windows.upgrade_code) |code| blk: {
         const parsed = uuid.parse(code) catch {
             ctx.fail("windows.upgrade_code '{s}' is not a GUID", .{code});
@@ -152,10 +215,12 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     run.addArgs(&.{ "--description", description });
     run.addArgs(&.{ "--upgrade-code", b.dupe(&upgrade_code) });
     run.addArgs(&.{ "--platform", ctx.target.msiPlatform() });
-    run.addArgs(&.{ "--install-dir", o.windows.install_dir_name orelse ctx.displayName() });
+    run.addArgs(&.{ "--install-dir", dir_name, "--install-root", @tagName(o.windows.install_root) });
     run.addArgs(&.{ "--add-to-path", @tagName(o.windows.add_to_path) });
-    if (o.windows.start_menu_shortcut) {
+    if (o.windows.start_menu_shortcut or o.windows.desktop_shortcut != .never) {
         run.addArgs(&.{ "--shortcut-name", ctx.displayName(), "--shortcut-target", ctx.binary.out_filename });
+        run.addArgs(&.{ "--start-menu", if (o.windows.start_menu_shortcut) "1" else "0" });
+        run.addArgs(&.{ "--desktop-shortcut", @tagName(o.windows.desktop_shortcut) });
     }
     if (ctx.meta.license) |l| run.addArgs(&.{ "--license", l });
     if (o.icon) |icon| {
