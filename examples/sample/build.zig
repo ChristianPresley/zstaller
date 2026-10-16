@@ -39,6 +39,9 @@ pub fn build(b: *std.Build) void {
         .targets = &.{ .windows_x86_64, .windows_aarch64, .ubuntu_x86_64, .ubuntu_aarch64 },
         .metadata = .{ .version = version },
         .sign = if (sign_thumbprint != null) signFile else null,
+        // A command-line tool installed next to the application. Give a
+        // program a `.shortcut` name to add it to the Start Menu.
+        .programs = &.{.{ .executable = createTool }},
         .icon = b.path("assets/sample.ico"),
         .extra_files = &.{
             .{ .source = b.path("README.md"), .dest = "README.md" },
@@ -89,6 +92,20 @@ fn signFile(b: *std.Build, request: zstaller.SignRequest) std.Build.LazyPath {
     run.addArg(sign_thumbprint.?);
     run.addFileArg(request.file);
     return run.addOutputFileArg(request.basename);
+}
+
+/// Builds the sample's command-line tool for one target, like createExe.
+fn createTool(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/tool.zig"),
+        .target = target,
+        .optimize = optimize,
+        .strip = optimize != .Debug,
+    });
+    mod.addOptions("options", options);
+    return b.addExecutable(.{ .name = "sample-tool", .root_module = mod });
 }
 
 /// zstaller calls this once per target to cross-compile the application.

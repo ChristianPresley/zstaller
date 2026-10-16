@@ -95,6 +95,14 @@ pub const Shortcut = struct {
     desktop: DesktopMode = .never,
 };
 
+/// A Start Menu shortcut to another program of the package.
+pub const ProgramShortcut = struct {
+    /// Shortcut name, without `.lnk`.
+    name: []const u8,
+    /// Install path of the program; must be one of `files`.
+    target: []const u8,
+};
+
 pub const Product = struct {
     name: []const u8,
     /// Numeric `major.minor.build` version.
@@ -116,6 +124,8 @@ pub const Product = struct {
     icon: ?[]const u8 = null,
     /// Shortcuts for all users, removed on uninstall.
     shortcut: ?Shortcut = null,
+    /// Start Menu shortcuts to other programs in `files`.
+    program_shortcuts: []const ProgramShortcut = &.{},
     files: []const File,
     /// Seconds since the Unix epoch for the summary timestamps.
     timestamp: u64 = 0,
@@ -124,6 +134,32 @@ pub const Product = struct {
 pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidVersion, NoFiles, TooManyFiles };
 
 const cabinet_name = "product.cab";
+
+const shortcut_columns = [_]db_mod.Column{
+    .{ .name = "Shortcut", .type = T.str(72) | T.key },
+    .{ .name = "Directory_", .type = T.str(72) },
+    .{ .name = "Name", .type = T.str(128) | T.localizable },
+    .{ .name = "Component_", .type = T.str(72) },
+    .{ .name = "Target", .type = T.str(72) },
+    .{ .name = "Arguments", .type = T.str(255) | T.nullable },
+    .{ .name = "Description", .type = T.str(255) | T.localizable | T.nullable },
+    .{ .name = "Hotkey", .type = T.int2 | T.nullable },
+    .{ .name = "Icon_", .type = T.str(72) | T.nullable },
+    .{ .name = "IconIndex", .type = T.int2 | T.nullable },
+    .{ .name = "ShowCmd", .type = T.int2 | T.nullable },
+    .{ .name = "WkDir", .type = T.str(72) | T.nullable },
+};
+
+fn shortcutTable(d: *Database, t: *?*db_mod.Table) !*db_mod.Table {
+    if (t.*) |existing| return existing;
+    t.* = try d.addTable("Shortcut", &shortcut_columns);
+    return t.*.?;
+}
+
+/// A file name Windows accepts for a shortcut, without `.lnk`.
+fn isValidShortcutName(name: []const u8) bool {
+    return name.len > 0 and std.mem.indexOfAny(u8, name, "\\/:*?\"<>|") == null;
+}
 
 const registry_columns = [_]db_mod.Column{
     .{ .name = "Registry", .type = T.str(72) | T.key },
@@ -167,6 +203,12 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(&.{0});
             h.update(sc.target);
             h.update(&.{ @intFromBool(sc.start_menu), @intFromEnum(sc.desktop) });
+        }
+        for (p.program_shortcuts) |ps| {
+            h.update(ps.name);
+            h.update(&.{0});
+            h.update(ps.target);
+            h.update(&.{0});
         }
         var d: [32]u8 = undefined;
         h.final(&d);
@@ -290,6 +332,8 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
 
     const cab_files = try a.alloc(cab.File, sorted_files.len);
     var root_component: ?[]const u8 = null;
+    const Installed = struct { file: []const u8, component: []const u8 };
+    var installed: std.StringHashMapUnmanaged(Installed) = .empty;
     var shortcut_file: ?struct { file: []const u8, component: []const u8 } = null;
     for (sorted_files, 0..) |f, i| {
         const file_key = try std.fmt.allocPrint(a, "F{d}", .{i + 1});
@@ -311,6 +355,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         });
         try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = comp_key } });
         if (root_component == null and dir_rel.len == 0) root_component = comp_key;
+        try installed.put(a, f.path, .{ .file = file_key, .component = comp_key });
         cab_files[i] = .{ .name = file_key, .data = f.data };
         if (p.shortcut) |sc| if (std.mem.eql(u8, sc.target, f.path)) {
             shortcut_file = .{ .file = file_key, .component = comp_key };
@@ -360,26 +405,15 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         }
     }.get;
 
-    // ---- Shortcuts. The Start Menu one is installed with the file it
-    // points at; the desktop one has its own component so that it can be
+    // ---- Shortcuts. The Start Menu ones are installed with the file they
+    // point at; the desktop one has its own component so that it can be
     // optional.
+    var shortcut_table: ?*db_mod.Table = null;
+    var start_menu_folder = false;
     if (p.shortcut) |sc| {
         const target = shortcut_file orelse return error.InvalidShortcut;
-        if (sc.name.len == 0 or std.mem.indexOfAny(u8, sc.name, "\\/:*?\"<>|") != null) return error.InvalidShortcut;
-        const shortcut = try db.addTable("Shortcut", &.{
-            .{ .name = "Shortcut", .type = T.str(72) | T.key },
-            .{ .name = "Directory_", .type = T.str(72) },
-            .{ .name = "Name", .type = T.str(128) | T.localizable },
-            .{ .name = "Component_", .type = T.str(72) },
-            .{ .name = "Target", .type = T.str(72) },
-            .{ .name = "Arguments", .type = T.str(255) | T.nullable },
-            .{ .name = "Description", .type = T.str(255) | T.localizable | T.nullable },
-            .{ .name = "Hotkey", .type = T.int2 | T.nullable },
-            .{ .name = "Icon_", .type = T.str(72) | T.nullable },
-            .{ .name = "IconIndex", .type = T.int2 | T.nullable },
-            .{ .name = "ShowCmd", .type = T.int2 | T.nullable },
-            .{ .name = "WkDir", .type = T.str(72) | T.nullable },
-        });
+        if (!isValidShortcutName(sc.name)) return error.InvalidShortcut;
+        const shortcut = try shortcutTable(&db, &shortcut_table);
         const Place = struct { key: []const u8, folder: []const u8, component: []const u8 };
         var places: [2]Place = undefined;
         var n: usize = 0;
@@ -404,6 +438,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             n += 1;
         }
         for (places[0..n]) |place| {
+            if (std.mem.eql(u8, place.folder, "ProgramMenuFolder")) start_menu_folder = true;
             try db.addRow(directory, &.{ .{ .str = place.folder }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
             try db.addRow(shortcut, &.{
                 .{ .str = place.key },
@@ -420,6 +455,30 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
                 .{ .str = "INSTALLDIR" },
             });
         }
+    }
+    for (p.program_shortcuts, 0..) |ps, i| {
+        const target = installed.get(ps.target) orelse return error.InvalidShortcut;
+        if (!isValidShortcutName(ps.name)) return error.InvalidShortcut;
+        const shortcut = try shortcutTable(&db, &shortcut_table);
+        if (!start_menu_folder) {
+            try db.addRow(directory, &.{ .{ .str = "ProgramMenuFolder" }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+            start_menu_folder = true;
+        }
+        // The program's own icon: no Icon_.
+        try db.addRow(shortcut, &.{
+            .{ .str = try std.fmt.allocPrint(a, "SProgram{d}", .{i}) },
+            .{ .str = "ProgramMenuFolder" },
+            .{ .str = try short_names.longName(a, "ProgramMenuFolder", ps.name) },
+            .{ .str = target.component },
+            .{ .str = try std.fmt.allocPrint(a, "[#{s}]", .{target.file}) },
+            .null,
+            .null,
+            .null,
+            .null,
+            .null,
+            .null,
+            .{ .str = "INSTALLDIR" },
+        });
     }
 
     // ---- PATH
@@ -787,6 +846,56 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
     defer gpa.free(folders.stdout);
     defer gpa.free(folders.stderr);
     try testing.expect(std.mem.indexOf(u8, folders.stdout, "INSTALLDIR\tC1") != null);
+}
+
+test "program shortcuts go to the Start Menu with their file (skipped when msiinfo is missing)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var out: Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try write(gpa, &out.writer, .{
+        .name = "Demo",
+        .version = "1.0.0",
+        .manufacturer = "Example",
+        .description = "A demo",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "Demo",
+        .shortcut = .{ .name = "Demo", .target = "demo.exe" },
+        .program_shortcuts = &.{.{ .name = "Demo Settings", .target = "settings.exe" }},
+        .files = &.{
+            .{ .path = "demo.exe", .data = "MZ" },
+            .{ .path = "democli.exe", .data = "MZ" },
+            .{ .path = "settings.exe", .data = "MZ" },
+        },
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
+    const path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/demo.msi", .{tmp.sub_path});
+    defer gpa.free(path);
+    const shortcuts = std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "Shortcut" } }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer gpa.free(shortcuts.stdout);
+    defer gpa.free(shortcuts.stderr);
+    try testing.expect(std.mem.indexOf(u8, shortcuts.stdout, "SStartMenu\tProgramMenuFolder\tDemo\tC1\t[#F1]") != null);
+    try testing.expect(std.mem.indexOf(u8, shortcuts.stdout, "SProgram0\tProgramMenuFolder\tDEMOSE~1|Demo Settings\tC3\t[#F3]") != null);
+
+    var bad: Writer.Allocating = .init(gpa);
+    defer bad.deinit();
+    try testing.expectError(error.InvalidShortcut, write(gpa, &bad.writer, .{
+        .name = "Demo",
+        .version = "1.0.0",
+        .manufacturer = "Example",
+        .description = "A demo",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "Demo",
+        .program_shortcuts = &.{.{ .name = "X", .target = "missing.exe" }},
+        .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
+    }));
 }
 
 test "shortcut must point at an installed file" {

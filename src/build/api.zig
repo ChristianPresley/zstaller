@@ -190,6 +190,27 @@ pub const ExecutableFn = *const fn (
     optimize: std.builtin.OptimizeMode,
 ) *Build.Step.Compile;
 
+/// Another program installed next to the application, such as a
+/// command-line tool beside a GUI, or a helper or service it starts.
+pub const Program = struct {
+    /// Builds it for one target, like `Options.executable`. Its file name
+    /// must differ from the application's and every other program's.
+    executable: ExecutableFn,
+    /// Name of a Start Menu shortcut to it on Windows. Null: no shortcut,
+    /// as suits command-line tools and helpers.
+    shortcut: ?[]const u8 = null,
+};
+
+/// A `Program` built for one target.
+pub const BuiltProgram = struct {
+    /// Its file name, e.g. `myapp-cli.exe`.
+    name: []const u8,
+    /// The binary to package (normalized and signed like the
+    /// application's).
+    file: LazyPath,
+    shortcut: ?[]const u8,
+};
+
 /// A file `Options.sign` is asked to sign.
 pub const SignRequest = struct {
     /// The unsigned file.
@@ -236,6 +257,9 @@ pub const Options = struct {
     /// Windows `.ico` file used for the installer, the uninstall entry and
     /// the MSI product icon.
     icon: ?LazyPath = null,
+    /// More programs installed next to the application: in the install
+    /// folder on Windows, in `/usr/bin` on Ubuntu.
+    programs: []const Program = &.{},
     /// Files installed next to the application (`/usr/share/<package>/`
     /// on Ubuntu).
     extra_files: []const ExtraFile = &.{},
@@ -306,6 +330,8 @@ pub const Context = struct {
     /// The binary to package. For Windows targets this is `binary` after
     /// `normalizePe`; otherwise it is `binary`'s emitted file.
     binary_file: LazyPath,
+    /// `options.programs`, built for this target.
+    programs: []const BuiltProgram,
     /// Seconds since the Unix epoch for package timestamps.
     source_date_epoch: u64,
     top: *Build.Step,
@@ -470,11 +496,16 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
     for (opts.targets) |t| {
         const resolved = b.resolveTargetQuery(t.query());
         const binary = opts.executable(b, resolved, opts.optimize);
-        if (needsSymbols(resolved.result)) binary.root_module.strip = false;
-        const binary_file = if (resolved.result.os.tag == .windows)
-            signed(b, opts, normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename), binary.out_filename, .windows_binary, t)
-        else
-            binary.getEmittedBin();
+        const binary_file = packagedBinary(b, opts, pack, t, resolved, binary);
+        const programs = b.allocator.alloc(BuiltProgram, opts.programs.len) catch @panic("OOM");
+        for (opts.programs, programs) |program, *built| {
+            const program_binary = program.executable(b, resolved, opts.optimize);
+            built.* = .{
+                .name = program_binary.out_filename,
+                .file = packagedBinary(b, opts, pack, t, resolved, program_binary),
+                .shortcut = program.shortcut,
+            };
+        }
         const ctx: Context = .{
             .b = b,
             .zb = zb,
@@ -485,21 +516,13 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             .resolved_target = resolved,
             .binary = binary,
             .binary_file = binary_file,
+            .programs = programs,
             .source_date_epoch = epoch,
             .top = top,
             .failures = failures,
             .icon = icon,
         };
-        var clash = false;
-        for (opts.extra_files, 0..) |f, i| {
-            if (std.ascii.eqlIgnoreCase(f.dest, binary.out_filename) or
-                (resolved.result.os.tag == .windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe")))
-            {
-                ctx.fail("extra_files[{d}].dest '{s}' is the name of a file the installer writes itself", .{ i, f.dest });
-                clash = true;
-            }
-        }
-        if (clash) continue;
+        if (!programsFit(&ctx)) continue;
         for (t.formats()) |format| {
             const package = Platform.addPackage(&ctx, format) orelse continue;
             const file_name = naming.installerFileName(b.allocator, meta.name, meta.version, t, format) catch @panic("OOM");
@@ -528,6 +551,63 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         }
     }
     return .{ .step = top, .outputs = outputs.items };
+}
+
+/// The file to package for `binary`: on Windows normalized (see
+/// `normalizePe`) and signed with `options.sign`.
+fn packagedBinary(b: *Build, options: *const Options, pack: *Build.Step.Compile, t: Target, resolved: Build.ResolvedTarget, binary: *Build.Step.Compile) LazyPath {
+    if (needsSymbols(resolved.result)) binary.root_module.strip = false;
+    if (resolved.result.os.tag != .windows) return binary.getEmittedBin();
+    const normalized = normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename);
+    return signed(b, options, normalized, binary.out_filename, .windows_binary, t);
+}
+
+/// Checks that the application, `programs`, `extra_files` and the
+/// uninstaller do not share a file name, and that program shortcuts have
+/// usable, distinct names. Reports what does not and returns false.
+fn programsFit(ctx: *const Context) bool {
+    const opts = ctx.options;
+    const windows = ctx.resolved_target.result.os.tag == .windows;
+    var ok = true;
+    for (ctx.programs, 0..) |p, i| {
+        if (std.ascii.eqlIgnoreCase(p.name, ctx.binary.out_filename) or (windows and std.ascii.eqlIgnoreCase(p.name, "uninstall.exe"))) {
+            ctx.fail("programs[{d}] is named '{s}', like a file the installer writes itself; give it another name", .{ i, p.name });
+            ok = false;
+        }
+        for (ctx.programs[0..i], 0..) |other, j| {
+            if (std.ascii.eqlIgnoreCase(p.name, other.name)) {
+                ctx.fail("programs[{d}] and programs[{d}] are both named '{s}'", .{ j, i, p.name });
+                ok = false;
+            }
+        }
+        if (p.shortcut) |name| {
+            if (name.len == 0 or std.mem.indexOfAny(u8, name, "\\/:*?\"<>|") != null or name[name.len - 1] == '.' or name[name.len - 1] == ' ') {
+                ctx.fail("programs[{d}].shortcut '{s}' cannot be a file name on Windows", .{ i, name });
+                ok = false;
+            }
+            const main_shortcut = opts.windows.start_menu_shortcut and std.ascii.eqlIgnoreCase(name, ctx.displayName());
+            if (main_shortcut) {
+                ctx.fail("programs[{d}].shortcut '{s}' is the name of the application's own shortcut", .{ i, name });
+                ok = false;
+            }
+            for (ctx.programs[0..i], 0..) |other, j| {
+                if (other.shortcut != null and std.ascii.eqlIgnoreCase(name, other.shortcut.?)) {
+                    ctx.fail("programs[{d}] and programs[{d}] both have the shortcut '{s}'", .{ j, i, name });
+                    ok = false;
+                }
+            }
+        }
+    }
+    for (opts.extra_files, 0..) |f, i| {
+        var clash = std.ascii.eqlIgnoreCase(f.dest, ctx.binary.out_filename) or
+            (windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe"));
+        for (ctx.programs) |p| clash = clash or (windows and std.ascii.eqlIgnoreCase(f.dest, p.name));
+        if (clash) {
+            ctx.fail("extra_files[{d}].dest '{s}' is the name of a file the installer writes itself", .{ i, f.dest });
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 /// `file` signed by `options.sign`, or `file` itself without one.

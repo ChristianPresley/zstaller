@@ -109,6 +109,11 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     payload_run.addArg("--file");
     payload_run.addFileArg(ctx.binary_file);
     payload_run.addArg(exe_name);
+    for (ctx.programs) |p| {
+        payload_run.addArg("--file");
+        payload_run.addFileArg(p.file);
+        payload_run.addArg(p.name);
+    }
     for (o.extra_files) |f| {
         payload_run.addArg("--file");
         payload_run.addFileArg(f.source);
@@ -167,6 +172,14 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption(bool, "launch_on_finish", w.launch_on_finish);
     config.addOption([]const u8, "registry_key", b.fmt("zstaller.{s}", .{ctx.meta.name}));
     config.addOption(bool, "start_menu_shortcut", o.windows.start_menu_shortcut);
+    var shortcut_names: std.ArrayList([]const u8) = .empty;
+    var shortcut_targets: std.ArrayList([]const u8) = .empty;
+    for (ctx.programs) |p| if (p.shortcut) |name| {
+        shortcut_names.append(b.allocator, name) catch @panic("OOM");
+        shortcut_targets.append(b.allocator, p.name) catch @panic("OOM");
+    };
+    config.addOption([]const []const u8, "program_shortcut_names", shortcut_names.items);
+    config.addOption([]const []const u8, "program_shortcut_targets", shortcut_targets.items);
     config.addOption(bool, "close_running_apps", o.windows.close_running_apps);
     config.addOption(bool, "has_icon", o.icon != null);
     config.addOption([]const u8, "description", ctx.meta.description orelse "");
@@ -272,6 +285,10 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         run.addArgs(&.{ "--start-menu", if (o.windows.start_menu_shortcut) "1" else "0" });
         run.addArgs(&.{ "--desktop-shortcut", @tagName(o.windows.desktop_shortcut) });
     }
+    for (ctx.programs, 0..) |p, i| if (p.shortcut) |name| {
+        if (!fitsWindows1252(ctx, b.fmt("programs[{d}].shortcut", .{i}), name)) return null;
+        run.addArgs(&.{ "--program-shortcut", name, p.name });
+    };
     if (ctx.meta.license) |l| run.addArgs(&.{ "--license", l });
     if (ctx.icon) |icon| {
         run.addArg("--icon");
@@ -280,6 +297,11 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     run.addArg("--file");
     run.addFileArg(ctx.binary_file);
     run.addArg(ctx.binary.out_filename);
+    for (ctx.programs) |p| {
+        run.addArg("--file");
+        run.addFileArg(p.file);
+        run.addArg(p.name);
+    }
     for (o.extra_files) |f| {
         run.addArg("--file");
         run.addFileArg(f.source);
