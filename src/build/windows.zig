@@ -78,6 +78,19 @@ fn installDirName(ctx: *const api.Context) ?[]const u8 {
     return std.mem.replaceOwned(u8, ctx.b.allocator, name, "/", "\\") catch @panic("OOM");
 }
 
+/// The MSI's UpgradeCode, `{GUID}`. The EXE uses it too, to find an
+/// installation made with the MSI.
+fn upgradeCode(ctx: *const api.Context) ?[38]u8 {
+    if (ctx.options.windows.upgrade_code) |code| {
+        const parsed = uuid.parse(code) catch {
+            ctx.fail("windows.upgrade_code '{s}' is not a GUID", .{code});
+            return null;
+        };
+        return uuid.format(parsed);
+    }
+    return uuid.format(uuid.v5Parts(uuid.zstaller_namespace, &.{ "upgrade-code", ctx.meta.name }));
+}
+
 /// An `InstallCommand` checked against the installed files, with its
 /// arguments joined into a command line.
 const Hook = struct { program: []const u8, args: []const u8 };
@@ -195,6 +208,8 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption(?[]const u8, "finish_text", w.finish_text);
     config.addOption(bool, "launch_on_finish", w.launch_on_finish);
     config.addOption([]const u8, "registry_key", b.fmt("zstaller.{s}", .{ctx.meta.name}));
+    const upgrade_code = upgradeCode(ctx) orelse return null;
+    config.addOption([]const u8, "msi_upgrade_key", b.dupe(&cli.packedGuid(&upgrade_code).?));
     config.addOption(bool, "start_menu_shortcut", o.windows.start_menu_shortcut);
     var shortcut_names: std.ArrayList([]const u8) = .empty;
     var shortcut_targets: std.ArrayList([]const u8) = .empty;
@@ -275,13 +290,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         const label = b.fmt("extra_files[{d}].dest", .{i});
         if (!fitsWindows1252(ctx, label, f.dest)) return null;
     }
-    const upgrade_code = if (o.windows.upgrade_code) |code| blk: {
-        const parsed = uuid.parse(code) catch {
-            ctx.fail("windows.upgrade_code '{s}' is not a GUID", .{code});
-            return null;
-        };
-        break :blk uuid.format(parsed);
-    } else uuid.format(uuid.v5Parts(uuid.zstaller_namespace, &.{ "upgrade-code", ctx.meta.name }));
+    const upgrade_code = upgradeCode(ctx) orelse return null;
 
     var ver_buf: [32]u8 = undefined;
     const msi_version = if (o.windows.msi_version) |v| blk: {
@@ -307,6 +316,9 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     run.addArgs(&.{ "--manufacturer", ctx.publisher() });
     run.addArgs(&.{ "--description", description });
     run.addArgs(&.{ "--upgrade-code", b.dupe(&upgrade_code) });
+    // The key the EXE installer registers under, so the MSI can refuse to
+    // install over an installation made with it.
+    run.addArgs(&.{ "--exe-registry-key", b.fmt("zstaller.{s}", .{ctx.meta.name}) });
     run.addArgs(&.{ "--platform", ctx.target.msiPlatform() });
     run.addArgs(&.{ "--install-dir", dir_name, "--install-root", @tagName(o.windows.install_root) });
     run.addArgs(&.{ "--add-to-path", @tagName(o.windows.add_to_path) });

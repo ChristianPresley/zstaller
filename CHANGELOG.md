@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The EXE and the MSI of a product refuse to install over each other,
+  instead of sharing files under two Apps & Features entries: setup.exe
+  checks for the MSI's upgrade code, and the MSI checks for the EXE's
+  uninstall entry with `AppSearch` and a launch condition.
+
 - Windows install and uninstall hooks: `windows.after_install` runs an
   installed program once the files are in place (a failure fails the EXE
   install and rolls the MSI back) and `windows.before_uninstall` runs one

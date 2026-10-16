@@ -5,7 +5,8 @@
 # exercise the MSI (silent install/uninstall with msiexec, with and without
 # ADDTOPATH) and the EXE installer (silent install, then silent uninstall by
 # running uninstall.exe directly, through the registered uninstall command
-# and through the setup program), install folders other users can change,
+# and through the setup program), that neither installs over the other,
+# install folders other users can change,
 # then upgrades and downgrades of both.
 # Must run elevated, as GitHub-hosted Windows runners do.
 #
@@ -175,6 +176,10 @@ Assert-Desktop $false
 $code = (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
     Where-Object { $_.DisplayName -eq 'Zstaller Sample' -and $_.PSChildName -like '{*}' }).PSChildName
 if (@($code).Count -ne 1) { throw "expected one MSI product code, found: $code" }
+Write-Host '== EXE: refused while the MSI is installed'
+$p = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
+if ($p.ExitCode -ne 1) { throw "setup.exe over the MSI exited with $($p.ExitCode), expected 1" }
+if (Test-Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample') { throw 'setup.exe registered over the MSI' }
 Invoke-Checked msiexec.exe "/x $code /qn"
 Assert-Removed
 
@@ -196,6 +201,10 @@ if (-not (Test-Path $uninstaller)) { throw "$uninstaller was not installed" }
 Assert-Signed $uninstaller
 # Run the uninstaller directly with no action, as a double-click does: it
 # must uninstall, not reinstall, and remove itself and the directory.
+Write-Host '== MSI: refused while the EXE is installed'
+$p = Start-Process -FilePath msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$PWD\msi-over-exe.log`"" -Wait -PassThru
+if ($p.ExitCode -ne 1603) { throw "the MSI over the EXE exited with $($p.ExitCode), expected 1603" }
+if (-not (Select-String -Path msi-over-exe.log -Pattern 'already installed with its setup program' -Quiet)) { throw 'the MSI did not say the EXE installation is in the way' }
 Write-Host '== EXE: uninstall.exe /S (no /uninstall)'
 Invoke-Checked $uninstaller '/S'
 Assert-ExeRemoved

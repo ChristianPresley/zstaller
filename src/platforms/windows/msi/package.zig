@@ -139,6 +139,10 @@ pub const Product = struct {
     /// Runs after every install, repair and upgrade; a non-zero exit
     /// code fails the install, which Windows Installer then rolls back.
     after_install: ?Hook = null,
+    /// Name of the `Uninstall` registry key the EXE installer of the same
+    /// product writes. When it is there, installing is refused: the two
+    /// installers would share files under two Apps & Features entries.
+    exe_registry_key: ?[]const u8 = null,
     /// Runs when the product is uninstalled (not when an upgrade removes
     /// the old version), before its files are removed. Its exit code is
     /// ignored.
@@ -248,6 +252,8 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(ps.target);
             h.update(&.{0});
         }
+        if (p.exe_registry_key) |key| h.update(key);
+        h.update(&.{0});
         for ([_]?Hook{ p.after_install, p.before_uninstall }) |hook| {
             if (hook) |x| {
                 h.update(x.target);
@@ -610,6 +616,37 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ .name = "Description", .type = T.str(255) | T.localizable },
     });
     try db.addRow(launch, &.{ .{ .str = "NOT NEWERVERSIONFOUND" }, .{ .str = try std.fmt.allocPrint(a, "A newer version of {s} is already installed.", .{p.name}) } });
+    if (p.exe_registry_key) |key| {
+        // AppSearch sets EXEINSTALLDIR from the EXE installation's
+        // InstallLocation (raw value, 64-bit registry view).
+        const app_search = try db.addTable("AppSearch", &.{
+            .{ .name = "Property", .type = T.str(72) | T.key },
+            .{ .name = "Signature_", .type = T.str(72) | T.key },
+        });
+        try db.addRow(app_search, &.{ .{ .str = "EXEINSTALLDIR" }, .{ .str = "ExeInstallation" } });
+        const reg_locator = try db.addTable("RegLocator", &.{
+            .{ .name = "Signature_", .type = T.str(72) | T.key },
+            .{ .name = "Root", .type = T.int2 },
+            .{ .name = "Key", .type = T.str(255) },
+            .{ .name = "Name", .type = T.str(255) | T.nullable },
+            .{ .name = "Type", .type = T.int2 | T.nullable },
+        });
+        const hklm = 2;
+        const raw_64bit = 2 | 0x10;
+        try db.addRow(reg_locator, &.{
+            .{ .str = "ExeInstallation" },
+            .{ .int = hklm },
+            .{ .str = try std.fmt.allocPrint(a, "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{s}", .{key}) },
+            .{ .str = "InstallLocation" },
+            .{ .int = raw_64bit },
+        });
+        // `Installed`: repairing or removing this MSI is never refused.
+        try db.addRow(launch, &.{ .{ .str = "Installed OR NOT EXEINSTALLDIR" }, .{ .str = try std.fmt.allocPrint(
+            a,
+            "{s} is already installed with its setup program in [EXEINSTALLDIR]. Uninstall it from Settings > Apps first, or use the setup program to upgrade it.",
+            .{p.name},
+        ) } });
+    }
 
     // ---- Sequences
     const seq_cols = [_]db_mod.Column{
@@ -619,15 +656,16 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     };
     const execute = try db.addTable("InstallExecuteSequence", &seq_cols);
     const execute_actions = [_]struct { []const u8, i32 }{
-        .{ "FindRelatedProducts", 25 },       .{ "LaunchConditions", 100 },   .{ "ValidateProductID", 700 },
-        .{ "CostInitialize", 800 },           .{ "FileCost", 900 },           .{ "CostFinalize", 1000 },
-        .{ "MigrateFeatureStates", 1200 },    .{ "InstallValidate", 1400 },   .{ "RemoveExistingProducts", 1401 },
-        .{ "InstallInitialize", 1500 },       .{ "ProcessComponents", 1600 }, .{ "UnpublishFeatures", 1800 },
-        .{ "RemoveRegistryValues", 2600 },    .{ "RemoveShortcuts", 3200 },   .{ "RemoveEnvironmentStrings", 3300 },
-        .{ "RemoveFiles", 3500 },             .{ "RemoveFolders", 3600 },     .{ "CreateFolders", 3700 },
-        .{ "InstallFiles", 4000 },            .{ "CreateShortcuts", 4500 },   .{ "WriteRegistryValues", 5000 },
-        .{ "WriteEnvironmentStrings", 5200 }, .{ "RegisterUser", 6000 },      .{ "RegisterProduct", 6100 },
-        .{ "PublishFeatures", 6300 },         .{ "PublishProduct", 6400 },    .{ "InstallFinalize", 6600 },
+        .{ "FindRelatedProducts", 25 },        .{ "AppSearch", 50 },                 .{ "LaunchConditions", 100 },
+        .{ "ValidateProductID", 700 },         .{ "CostInitialize", 800 },           .{ "FileCost", 900 },
+        .{ "CostFinalize", 1000 },             .{ "MigrateFeatureStates", 1200 },    .{ "InstallValidate", 1400 },
+        .{ "RemoveExistingProducts", 1401 },   .{ "InstallInitialize", 1500 },       .{ "ProcessComponents", 1600 },
+        .{ "UnpublishFeatures", 1800 },        .{ "RemoveRegistryValues", 2600 },    .{ "RemoveShortcuts", 3200 },
+        .{ "RemoveEnvironmentStrings", 3300 }, .{ "RemoveFiles", 3500 },             .{ "RemoveFolders", 3600 },
+        .{ "CreateFolders", 3700 },            .{ "InstallFiles", 4000 },            .{ "CreateShortcuts", 4500 },
+        .{ "WriteRegistryValues", 5000 },      .{ "WriteEnvironmentStrings", 5200 }, .{ "RegisterUser", 6000 },
+        .{ "RegisterProduct", 6100 },          .{ "PublishFeatures", 6300 },         .{ "PublishProduct", 6400 },
+        .{ "InstallFinalize", 6600 },
     };
     for (execute_actions) |act| try db.addRow(execute, &.{ .{ .str = act[0] }, .null, .{ .int = act[1] } });
 
@@ -663,9 +701,9 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     }
     const ui = try db.addTable("InstallUISequence", &seq_cols);
     const ui_actions = [_]struct { []const u8, i32 }{
-        .{ "FindRelatedProducts", 25 },    .{ "LaunchConditions", 100 }, .{ "ValidateProductID", 700 },
-        .{ "CostInitialize", 800 },        .{ "FileCost", 900 },         .{ "CostFinalize", 1000 },
-        .{ "MigrateFeatureStates", 1200 }, .{ "ExecuteAction", 1300 },
+        .{ "FindRelatedProducts", 25 }, .{ "AppSearch", 50 },              .{ "LaunchConditions", 100 },
+        .{ "ValidateProductID", 700 },  .{ "CostInitialize", 800 },        .{ "FileCost", 900 },
+        .{ "CostFinalize", 1000 },      .{ "MigrateFeatureStates", 1200 }, .{ "ExecuteAction", 1300 },
     };
     for (ui_actions) |act| try db.addRow(ui, &.{ .{ .str = act[0] }, .null, .{ .int = act[1] } });
 

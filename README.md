@@ -400,8 +400,15 @@ manager and force-quits other programs after asking. A silent (`/S`) run
 prints the same list to standard error and fails, or with
 `close_running_apps` closes them without asking.
 
-Exit codes: 0 success, 1 error (including a newer version already
-installed), 2 cancelled, 3 bad arguments.
+The EXE and the MSI of a product do not install over each other: each
+would otherwise put the same files in the same folder under its own Apps &
+Features entry, and uninstalling one would break the other. Setup refuses
+while the MSI is installed (it looks for the MSI's upgrade code), and the
+MSI refuses while the EXE installation is there. Pick one installer per
+machine; to switch, uninstall the other first.
+
+Exit codes: 0 success, 1 error (including a newer version, or the
+MSI, already installed), 2 cancelled, 3 bad arguments.
 
 #### Install and uninstall hooks
 
