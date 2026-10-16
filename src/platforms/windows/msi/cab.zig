@@ -90,33 +90,18 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
         off += f.data.len;
     }
 
-    var blocks: std.ArrayList([]const u8) = .empty;
+    // Compressed blocks, allocated with `block_allocator` by the workers.
+    const block_count = (folder.len + block_size - 1) / block_size;
+    const blocks = try gpa.alloc(?[]u8, if (compression == .mszip) block_count else 0);
+    @memset(blocks, null);
     defer {
-        for (blocks.items) |b| gpa.free(b);
-        blocks.deinit(gpa);
+        for (blocks) |b| if (b) |bytes| block_allocator.free(bytes);
+        gpa.free(blocks);
     }
     var kind = compression;
-    if (kind == .mszip) {
-        var pos: usize = 0;
-        while (pos < folder.len) : (pos += block_size) {
-            const chunk = folder[pos..@min(pos + block_size, folder.len)];
-            var buf: Writer.Allocating = .init(gpa);
-            errdefer buf.deinit();
-            buf.writer.writeAll("CK") catch return error.OutOfMemory;
-            try deflate.compressTo(gpa, &buf.writer, chunk, .raw);
-            const bytes = try buf.toOwnedSlice();
-            if (bytes.len > block_size) {
-                gpa.free(bytes);
-                for (blocks.items) |b| gpa.free(b);
-                blocks.clearRetainingCapacity();
-                kind = .none;
-                break;
-            }
-            try blocks.append(gpa, bytes);
-        }
-    }
+    if (kind == .mszip and !try compressBlocks(folder, blocks)) kind = .none;
 
-    const num_blocks: usize = if (kind == .mszip) blocks.items.len else (folder.len + block_size - 1) / block_size;
+    const num_blocks: usize = block_count;
     if (num_blocks > 0xFFFF) return error.TooLarge;
 
     var files_size: usize = 0;
@@ -124,7 +109,7 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
     const data_start = header_size + folder_size + files_size;
     var data_size: usize = num_blocks * data_header_size;
     if (kind == .mszip) {
-        for (blocks.items) |b| data_size += b.len;
+        for (blocks) |b| data_size += b.?.len;
     } else {
         data_size += folder.len;
     }
@@ -170,7 +155,7 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
     // CFDATA blocks
     for (0..num_blocks) |i| {
         const raw_len = @min(block_size, folder.len - i * block_size);
-        const payload = if (kind == .mszip) blocks.items[i] else folder[i * block_size ..][0..raw_len];
+        const payload = if (kind == .mszip) blocks[i].? else folder[i * block_size ..][0..raw_len];
         var sizes: [4]u8 = undefined;
         std.mem.writeInt(u16, sizes[0..2], @intCast(payload.len), .little);
         std.mem.writeInt(u16, sizes[2..4], @intCast(raw_len), .little);
@@ -182,6 +167,61 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
 
 /// The CFDATA checksum from [MS-CAB] 2.6 (CSUMCompute): XOR of the data
 /// as little-endian 32-bit words, with trailing bytes folded in reverse.
+/// Thread-safe, for the compression workers.
+const block_allocator = std.heap.smp_allocator;
+
+/// Compresses each 32 KB block of `folder` into `blocks` ("CK" and a raw
+/// deflate stream), on every CPU: MSZIP blocks are independent, so the
+/// result does not depend on the number of threads. Returns false when a
+/// block does not fit in `block_size` compressed, and the folder must be
+/// stored instead.
+fn compressBlocks(folder: []const u8, blocks: []?[]u8) Allocator.Error!bool {
+    const Shared = struct {
+        folder: []const u8,
+        blocks: []?[]u8,
+        next: std.atomic.Value(usize) = .init(0),
+        too_big: std.atomic.Value(bool) = .init(false),
+        out_of_memory: std.atomic.Value(bool) = .init(false),
+
+        fn work(sh: *@This()) void {
+            while (!sh.too_big.load(.monotonic) and !sh.out_of_memory.load(.monotonic)) {
+                const i = sh.next.fetchAdd(1, .monotonic);
+                if (i >= sh.blocks.len) return;
+                const chunk = sh.folder[i * block_size ..][0..@min(block_size, sh.folder.len - i * block_size)];
+                var buf: Writer.Allocating = .init(block_allocator);
+                buf.writer.writeAll("CK") catch {
+                    sh.out_of_memory.store(true, .monotonic);
+                    return;
+                };
+                deflate.compressTo(block_allocator, &buf.writer, chunk, .raw) catch {
+                    buf.deinit();
+                    sh.out_of_memory.store(true, .monotonic);
+                    return;
+                };
+                const bytes = buf.toOwnedSlice() catch {
+                    buf.deinit();
+                    sh.out_of_memory.store(true, .monotonic);
+                    return;
+                };
+                sh.blocks[i] = bytes;
+                if (bytes.len > block_size) sh.too_big.store(true, .monotonic);
+            }
+        }
+    };
+    var shared: Shared = .{ .folder = folder, .blocks = blocks };
+    var threads: [32]std.Thread = undefined;
+    const wanted = @min(threads.len, std.Thread.getCpuCount() catch 1, blocks.len);
+    var started: usize = 0;
+    // The calling thread works too; extra threads only when they start.
+    while (started + 1 < wanted) : (started += 1) {
+        threads[started] = std.Thread.spawn(.{}, Shared.work, .{&shared}) catch break;
+    }
+    shared.work();
+    for (threads[0..started]) |t| t.join();
+    if (shared.out_of_memory.load(.monotonic)) return error.OutOfMemory;
+    return !shared.too_big.load(.monotonic);
+}
+
 pub fn checksum(data: []const u8, seed: u32) u32 {
     var csum = seed;
     var i: usize = 0;
