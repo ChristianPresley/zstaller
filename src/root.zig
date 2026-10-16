@@ -32,6 +32,7 @@ pub const uuid = @import("uuid.zig");
 pub const image = @import("image.zig");
 pub const deb = @import("platforms/ubuntu/deb.zig");
 pub const exe_payload = @import("platforms/windows/exe/payload.zig");
+pub const exe_overlay = @import("platforms/windows/exe/overlay.zig");
 pub const exe_cli = @import("platforms/windows/exe/stub/cli.zig");
 pub const wizard_assets = @import("platforms/windows/exe/wizard_assets.zig");
 pub const wizard_art = @import("platforms/windows/exe/stub/art.zig");

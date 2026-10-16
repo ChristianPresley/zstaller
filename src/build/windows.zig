@@ -132,11 +132,12 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         wizard_run.addFileArg(file);
     }
 
+    // The application's files are appended to the linked setup program
+    // (see exe/overlay.zig), so editing the application does not compile
+    // the setup program again. Only the wizard's assets are compiled in.
     const wf = b.addWriteFiles();
-    _ = wf.addCopyFile(payload_bin, "payload.bin");
     _ = wf.addCopyFile(wizard_bin, "wizard.bin");
     const payload_zig = wf.add("payload.zig",
-        \\pub const bytes = @embedFile("payload.bin");
         \\pub const wizard = @embedFile("wizard.bin");
         \\
     );
@@ -205,7 +206,12 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         .win32_manifest = manifest,
     });
     stub.subsystem = .windows;
-    return api.normalizePe(b, ctx.pack, ctx.target, stub.getEmittedBin(), stub.out_filename);
+    const stub_file = api.normalizePe(b, ctx.pack, ctx.target, stub.getEmittedBin(), stub.out_filename);
+
+    const assemble = ctx.runPack("exe-assemble");
+    assemble.addFileArg(stub_file);
+    assemble.addFileArg(payload_bin);
+    return assemble.addOutputFileArg(stub.out_filename);
 }
 
 fn addMsi(ctx: *const api.Context) ?LazyPath {

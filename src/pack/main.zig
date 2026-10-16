@@ -52,6 +52,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdWizard(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "msi")) {
         try cmdMsi(ctx, rest);
+    } else if (std.mem.eql(u8, cmd, "exe-assemble")) {
+        cmdExeAssemble(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "check-icon")) {
         cmdCheckIcon(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "pe-normalize")) {
@@ -78,7 +80,7 @@ const Ctx = struct {
 };
 
 fn usage() noreturn {
-    fail("usage: zstaller-pack <checksum|deb|payload|wizard|msi|check-icon|pe-normalize> [options]", .{});
+    fail("usage: zstaller-pack <checksum|deb|payload|wizard|msi|exe-assemble|check-icon|pe-normalize> [options]", .{});
 }
 
 fn fail(comptime fmt: []const u8, args: anytype) noreturn {
@@ -180,6 +182,14 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         .mtime = o.mtime(),
     }) catch |err| fail("cannot build .deb: {t}", .{err});
     ctx.writeFile(o.required("out"), out.written());
+}
+
+/// `exe-assemble <stub> <payload> <out>`: appends the payload to the
+/// linked setup program as an overlay.
+fn cmdExeAssemble(ctx: Ctx, args: []const []const u8) void {
+    if (args.len != 3) fail("usage: zstaller-pack exe-assemble <stub> <payload> <out>", .{});
+    const out = zstaller.exe_overlay.append(ctx.arena, ctx.readFile(args[0]), ctx.readFile(args[1])) catch oom();
+    ctx.writeFile(args[2], out);
 }
 
 /// `check-icon <in> <label> <out>`: copies a Windows .ico file, failing
