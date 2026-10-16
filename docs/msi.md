@@ -44,7 +44,8 @@ root entry carries the Windows Installer CLSID
 
 Tables written: `Property`, `Directory`, `Component`, `File`,
 `FeatureComponents`, `Registry`, `Environment`, `Feature`, `Media`, `Icon`,
-`Shortcut`, `Upgrade`, `LaunchCondition`, `InstallExecuteSequence`,
+`Shortcut`, `CreateFolder`, `MsiLockPermissionsEx`, `Upgrade`,
+`LaunchCondition`, `InstallExecuteSequence`,
 `InstallUISequence`. The icon (a binary column of the `Icon` table) and the
 cabinet are stored as separate streams.
 
@@ -57,6 +58,13 @@ cabinet are stored as separate streams.
   (`install_root`). A nested install dir (`Acme\Widget`) gets one
   `Directory` row per folder. 8.3 short names are generated for every
   directory and file.
+- **Permissions.** `CreateFolder` and `MsiLockPermissionsEx` give
+  `INSTALLDIR` an owner of Administrators and a protected DACL: SYSTEM and
+  Administrators full control, Users and app packages read and execute.
+  Outside Program Files the `INSTALLPARENT` folders of a nested install
+  dir get the same, so users cannot rename them. Files inherit from
+  `INSTALLDIR`. (`MsiLockPermissionsEx` needs Windows Installer 5.0, which
+  every supported Windows has.)
 - The cabinet is stored as stream `product.cab` and referenced from the
   `Media` table as `#product.cab`.
 - **Upgrades.** The product code is derived from the upgrade code, the

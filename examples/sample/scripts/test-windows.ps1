@@ -5,7 +5,8 @@
 # exercise the MSI (silent install/uninstall with msiexec, with and without
 # ADDTOPATH) and the EXE installer (silent install, then silent uninstall by
 # running uninstall.exe directly, through the registered uninstall command
-# and through the setup program), then upgrades and downgrades of both.
+# and through the setup program), install folders other users can change,
+# then upgrades and downgrades of both.
 # Must run elevated, as GitHub-hosted Windows runners do.
 #
 # -InstallerDir tests already-built installers (for example the ones a
@@ -64,6 +65,23 @@ function Assert-Desktop($expected) {
     }
 }
 
+# Only SYSTEM and administrators may change the install folder and what
+# is in it, and it does not inherit permissions from the folder above.
+function Assert-LockedDown($folder) {
+    foreach ($item in @($folder, (Join-Path $folder 'sample.exe'))) {
+        $acl = Get-Acl $item
+        if ($acl.Owner -notin 'BUILTIN\Administrators', 'NT AUTHORITY\SYSTEM') { throw "$item is owned by $($acl.Owner)" }
+        $writable = $acl.Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference -notmatch 'SYSTEM|Administrators' -and
+            $_.FileSystemRights.ToString() -match 'Modify|Write|FullControl|Delete|ChangePermissions|TakeOwnership|CreateFiles|AppendData'
+        }
+        if ($writable) { throw "others can still change ${item}: $($writable | Out-String)" }
+    }
+    if (-not (Get-Acl $folder).AreAccessRulesProtected) { throw "$folder inherits permissions from the folder above" }
+    Write-Host "Locked down: $folder"
+}
+
 function Assert-Installed($expectOnPath) {
     if (-not (Test-Path $app)) { throw "$app was not installed" }
     if (-not (Test-Path (Join-Path $dir 'README.md'))) { throw 'README.md was not installed' }
@@ -72,6 +90,7 @@ function Assert-Installed($expectOnPath) {
     Write-Host $out
     if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
+    Assert-LockedDown $dir
     Assert-Shortcut
 }
 
@@ -160,6 +179,24 @@ Invoke-Checked $exe '/uninstall /S'
 for ($i = 0; $i -lt 20 -and (Test-Path $custom); $i++) { Start-Sleep -Milliseconds 500 }
 if (Test-Path $custom) { throw "$custom still exists" }
 if (Test-Path $key) { throw 'EXE uninstall entry was not removed' }
+
+Write-Host '== EXE: folders other users can change are refused or locked down'
+$open = Join-Path $env:SystemDrive 'zstaller open'
+New-Item -ItemType Directory -Force $open | Out-Null
+# Let Users modify it, as a folder in C:\ lets Authenticated Users.
+icacls $open /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
+$p = Start-Process -FilePath $exe -ArgumentList "/S `"/D=$open\Sample App`"" -Wait -PassThru
+if ($p.ExitCode -ne 1) { throw "installing inside a folder Users can rename exited with $($p.ExitCode), expected 1" }
+if (Test-Path "$open\Sample App") { throw 'the refused install created its folder' }
+Set-Content (Join-Path $open 'other.dll') 'not ours'
+$p = Start-Process -FilePath $exe -ArgumentList "/S `"/D=$open`"" -Wait -PassThru
+if ($p.ExitCode -ne 1) { throw "installing into a folder with other files Users can change exited with $($p.ExitCode), expected 1" }
+Remove-Item (Join-Path $open 'other.dll')
+Invoke-Checked $exe "/S /NOPATH `"/D=$open`""
+Assert-LockedDown $open
+Invoke-Checked $exe '/uninstall /S'
+for ($i = 0; $i -lt 20 -and (Test-Path $open); $i++) { Start-Sleep -Milliseconds 500 }
+if (Test-Path $open) { throw "$open still exists" }
 
 Write-Host '== EXE: a folder the user put on PATH stays there after uninstall'
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')

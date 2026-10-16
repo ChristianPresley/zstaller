@@ -280,6 +280,17 @@ can add the install directory to the system PATH. The wizard follows each
 monitor's display scaling and uses the application icon in its title bar
 and taskbar button. It requests administrator rights.
 
+Only SYSTEM and administrators can change the install folder, as in
+Program Files, wherever it is: the uninstaller in it runs as
+administrator, and the folder may be on the system PATH. Setup creates new
+folders that way. An existing install folder that other users can change
+is locked down the same way when it is empty or holds an earlier
+installation; otherwise Setup stops and asks for an empty folder. It also
+stops at junctions and symbolic links, and inside a folder other users can
+rename (such as one made by a user in `C:\`), except the folders of the
+application's own default location (`Acme` in `C:\Acme\Widget`), which it
+locks down.
+
 `uninstall.exe` shows the same window: a confirmation page, progress and a
 result page.
 
@@ -380,7 +391,9 @@ replaces the old one; installing an older one is blocked), an optional
 PATH entry controlled by the `ADDTOPATH` property (default 1) and, with
 `desktop_shortcut = .optional`, a desktop shortcut controlled by
 `DESKTOPSHORTCUT` (default 0). It installs to the same default folder as
-the EXE. The MSI shows Windows Installer's basic progress UI, not the
+the EXE, and locks the install folder down the same way (only SYSTEM and
+administrators may change it), along with the folders of a nested
+`install_dir_name` outside Program Files. The MSI shows Windows Installer's basic progress UI, not the
 EXE's wizard.
 
 ```bat
@@ -448,6 +461,11 @@ info in `ReleaseSafe`. Set `.strip = optimize != .Debug` on the root
 module. Windows ARM64 binaries keep it regardless, in a separate `.pdb`
 that is not packaged, because of a Zig 0.16 code generation bug (see
 `needsSymbols` in [`src/build/api.zig`](src/build/api.zig)).
+
+**"Users other than administrators can rename or change ..."** or
+**"... already holds files that other users can change"**: Setup will not
+install where a user could replace the installed programs. Pick a folder
+in Program Files, a new folder, or an empty one.
 
 **SmartScreen says "Windows protected your PC", or UAC shows "Unknown
 publisher"**: the installers are not code-signed; see

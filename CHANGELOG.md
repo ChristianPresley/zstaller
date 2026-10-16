@@ -83,6 +83,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Security: install folders outside Program Files no longer inherit
+  permissions that let every user replace the installed programs, which
+  include the uninstaller that runs as administrator and, possibly, a
+  folder on the system PATH. The EXE and MSI now give the install folder
+  Program Files permissions (only SYSTEM and administrators can change
+  it). The EXE also refuses junctions and symbolic links on the way to the
+  install folder, existing folders above it that other users can rename,
+  and existing install folders other users can change that hold other
+  files. Uninstall skips files reached through a junction.
+
 - Security: the elevated EXE installer no longer loads `RstrtMgr.dll`
   from its own folder, and only loads system DLLs from System32, so a DLL
   planted next to setup.exe cannot run as administrator. The uninstall

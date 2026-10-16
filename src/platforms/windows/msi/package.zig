@@ -31,6 +31,11 @@ const payload = @import("../exe/payload.zig");
 
 const Database = db_mod.Database;
 const T = db_mod.ColumnType;
+
+/// SYSTEM and Administrators: full control; Users and app packages: read
+/// and run; owned by Administrators; not inherited from the folder above.
+/// The EXE installer uses the same (exe/stub/folder.zig).
+const locked_sddl = "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)";
 const Value = db_mod.Value;
 
 pub const Platform = enum {
@@ -209,6 +214,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     // `install_dir` may be nested ("Acme\\Widget"): one row per folder,
     // the last one INSTALLDIR.
     var short_names: ShortNames = .{};
+    var parent_count: usize = 0;
     {
         var segments: std.ArrayList([]const u8) = .empty;
         var it = std.mem.splitAny(u8, p.install_dir, "\\/");
@@ -222,6 +228,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             try db.addRow(directory, &.{ .{ .str = id }, .{ .str = parent }, .{ .str = try short_names.longName(a, parent, seg) } });
             parent = id;
         }
+        parent_count = segments.items.len - 1;
     }
 
     // Subdirectories, keyed by relative path ("" = INSTALLDIR).
@@ -282,6 +289,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     const file_vital = 512;
 
     const cab_files = try a.alloc(cab.File, sorted_files.len);
+    var root_component: ?[]const u8 = null;
     var shortcut_file: ?struct { file: []const u8, component: []const u8 } = null;
     for (sorted_files, 0..) |f, i| {
         const file_key = try std.fmt.allocPrint(a, "F{d}", .{i + 1});
@@ -302,10 +310,43 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .int = @intCast(i + 1) },
         });
         try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = comp_key } });
+        if (root_component == null and dir_rel.len == 0) root_component = comp_key;
         cab_files[i] = .{ .name = file_key, .data = f.data };
         if (p.shortcut) |sc| if (std.mem.eql(u8, sc.target, f.path)) {
             shortcut_file = .{ .file = file_key, .component = comp_key };
         };
+    }
+
+    // ---- Install folder permissions. Only SYSTEM and administrators may
+    // change the install folder, as in Program Files; elsewhere (C:\ or
+    // ProgramData, or an INSTALLDIR given on the command line) it would
+    // otherwise inherit permissions that let users replace the programs.
+    // Outside Program Files the same goes for the folders of a nested
+    // `install_dir` above it, which users could otherwise rename.
+    if (root_component) |comp| {
+        const create_folder = try db.addTable("CreateFolder", &.{
+            .{ .name = "Directory_", .type = T.str(72) | T.key },
+            .{ .name = "Component_", .type = T.str(72) | T.key },
+        });
+        const lock = try db.addTable("MsiLockPermissionsEx", &.{
+            .{ .name = "MsiLockPermissionsEx", .type = T.str(72) | T.key },
+            .{ .name = "LockObject", .type = T.str(72) },
+            .{ .name = "Table", .type = T.str(32) },
+            .{ .name = "SDDL", .type = T.str(0) },
+            .{ .name = "Condition", .type = T.str(255) | T.nullable },
+        });
+        const locked = if (p.install_root == .program_files) 0 else parent_count;
+        for (0..locked + 1) |i| {
+            const dir_id = if (i == locked) "INSTALLDIR" else try std.fmt.allocPrint(a, "INSTALLPARENT{d}", .{i});
+            try db.addRow(create_folder, &.{ .{ .str = dir_id }, .{ .str = comp } });
+            try db.addRow(lock, &.{
+                .{ .str = try std.fmt.allocPrint(a, "L{d}", .{i}) },
+                .{ .str = dir_id },
+                .{ .str = "CreateFolder" },
+                .{ .str = locked_sddl },
+                .null,
+            });
+        }
     }
 
     // ---- Registry: key paths for components that install no file.
@@ -732,6 +773,18 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
     defer gpa.free(comps.stdout);
     defer gpa.free(comps.stderr);
     try testing.expect(std.mem.indexOf(u8, comps.stdout, "DESKTOPSHORTCUT=1\tRDesktop") != null);
+
+    // Outside Program Files, the install folder and the folder above it
+    // are locked down.
+    const locks = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "MsiLockPermissionsEx" } });
+    defer gpa.free(locks.stdout);
+    defer gpa.free(locks.stderr);
+    try testing.expect(std.mem.indexOf(u8, locks.stdout, "L0\tINSTALLPARENT0\tCreateFolder\t" ++ locked_sddl) != null);
+    try testing.expect(std.mem.indexOf(u8, locks.stdout, "L1\tINSTALLDIR\tCreateFolder\t" ++ locked_sddl) != null);
+    const folders = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "CreateFolder" } });
+    defer gpa.free(folders.stdout);
+    defer gpa.free(folders.stderr);
+    try testing.expect(std.mem.indexOf(u8, folders.stdout, "INSTALLDIR\tC1") != null);
 }
 
 test "shortcut must point at an installed file" {
