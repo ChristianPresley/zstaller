@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `.deb` packages pass lintian: they include `changelog.gz` and a
+  lintian override for the static binaries, compress manual pages, and
+  take a `deb.long_description` and a `deb.copyright` notice. The Linux
+  end-to-end test runs lintian and fails on errors and warnings.
+
 - `.deb` packages can install files anywhere (`deb.files`: man pages,
   completions, systemd units, configuration), with files in `/etc` listed
   as conffiles so dpkg keeps local changes on upgrade; a menu entry with

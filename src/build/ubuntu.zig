@@ -60,7 +60,7 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
     if (o.deb.depends) |d| run.addArgs(&.{ "--depends", d });
     if (ctx.meta.license) |l| {
         run.addArgs(&.{ "--license", l });
-        if (o.windows.publisher) |p| run.addArgs(&.{ "--copyright", p });
+        if (o.deb.copyright orelse o.windows.publisher) |holder| run.addArgs(&.{ "--copyright", holder });
     }
 
     run.addArg("--file");
@@ -75,6 +75,11 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
         run.addArg("--file");
         run.addFileArg(f.source);
         run.addArgs(&.{ b.fmt("/usr/share/{s}/{s}", .{ pkg_name, f.dest }), "644" });
+    }
+    if (o.deb.long_description) |text| {
+        const wf = b.addWriteFiles();
+        run.addArg("--long-description");
+        run.addFileArg(wf.add("long-description.txt", text));
     }
     if (!addLayout(ctx, run, pkg_name, description)) return null;
     return out;
@@ -96,6 +101,8 @@ fn addLayout(ctx: *const api.Context, run: *std.Build.Step.Run, pkg_name: []cons
     for (ctx.programs) |p| put(&taken, b.allocator, b.fmt("/usr/bin/{s}", .{p.name}), "a program");
     for (o.extra_files) |f| put(&taken, b.allocator, b.fmt("/usr/share/{s}/{s}", .{ pkg_name, f.dest }), "an extra file");
     if (ctx.meta.license != null) put(&taken, b.allocator, b.fmt("/usr/share/doc/{s}/copyright", .{pkg_name}), "the copyright file");
+    put(&taken, b.allocator, b.fmt("/usr/share/doc/{s}/changelog.gz", .{pkg_name}), "the changelog");
+    put(&taken, b.allocator, b.fmt("/usr/share/lintian/overrides/{s}", .{pkg_name}), "the lintian overrides");
     const desktop_path = b.fmt("/usr/share/applications/{s}.desktop", .{pkg_name});
     if (o.deb.desktop_entry != null) put(&taken, b.allocator, desktop_path, "the desktop entry");
 

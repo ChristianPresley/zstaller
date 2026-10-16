@@ -18,7 +18,7 @@
     .version = "1.0.0",
     .fingerprint = 0xf10b76c3cd2fce96, // Changing this has security and trust implications.
     // zstaller reads these two extra fields for package metadata.
-    .description = "Sample application packaged with zstaller",
+    .description = "Example program packaged with zstaller",
     .license = "Apache-2.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

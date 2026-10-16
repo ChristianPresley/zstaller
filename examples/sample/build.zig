@@ -75,9 +75,17 @@ pub fn build(b: *std.Build) void {
         .deb = .{
             .maintainer = "The zstaller Authors <noreply@example.com>",
             .homepage = "https://github.com/ChristianPresley/zstaller",
-            // A man page for the tool, and a configuration file: files in
-            // /etc keep the administrator's changes on upgrade.
+            .long_description =
+            \\Prints its version, the platform it was built for and where it is
+            \\installed, to show how zstaller packages a Zig program.
+            \\
+            \\sample-tool, installed with it, prints the SHA-256 of files.
+            ,
+            .copyright = "2026 The zstaller Authors",
+            // Man pages (compressed for you) and a configuration file:
+            // files in /etc keep the administrator's changes on upgrade.
             .files = &.{
+                .{ .source = b.path("linux/sample.1"), .dest = "/usr/share/man/man1/sample.1" },
                 .{ .source = b.path("linux/sample-tool.1"), .dest = "/usr/share/man/man1/sample-tool.1" },
                 .{ .source = b.path("linux/sample.conf"), .dest = "/etc/sample/sample.conf" },
             },
