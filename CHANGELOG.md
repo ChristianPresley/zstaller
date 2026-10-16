@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/NODESKTOP`; the MSI has a `DESKTOPSHORTCUT` property.
 - The EXE installer defaults to the folder of the installed version when
   it upgrades.
+- `.windows.close_running_apps` lets the EXE installer and uninstaller
+  force-quit programs running from the install directory. They list each
+  program and its process ID and ask first; silent runs do not ask. The
+  sample enables it.
+- `Options.source_date_epoch` sets the package timestamp from build.zig.
+- MSI cabinet file dates follow `SOURCE_DATE_EPOCH` instead of always being
+  1980-01-01.
+- CI builds the sample twice at different paths with separate caches, on
+  Linux and Windows, and requires identical installers across all builds.
+- Release notes record the `SOURCE_DATE_EPOCH` and commit used, with the
+  commands to rebuild the installers byte for byte.
+
+- `zig build docs` builds an API reference of every build option.
+- The README starts with a quick start that works on a fresh `zig init`
+  project, documents every option, the EXE command line, MSI properties,
+  logging and elevation, and adds a troubleshooting section.
+  CONTRIBUTING describes every step of adding a platform.
 
 ### Changed
 
@@ -122,7 +139,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `setup.exe /uninstall` now removes the installation recorded in the
   registry. It used to treat the setup program's own folder (such as
   Downloads) as the install directory.
-
 - Installers are reproducible regardless of build directory, cache
   location or host. The linker derives Windows binaries' CodeView GUID and
   timestamps from their .pdb, which holds absolute paths, so aarch64
@@ -134,19 +150,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not track, so cached installers with the old timestamps were reused. The
   build API now resolves it and passes it as an argument.
 
+## [0.1.0] - 2026-10-14
+
 ### Added
 
-- `.windows.close_running_apps` lets the EXE installer and uninstaller
-  force-quit programs running from the install directory. They list each
-  program and its process ID and ask first; silent runs do not ask. The
-  sample enables it.
-- `Options.source_date_epoch` sets the package timestamp from build.zig.
-- MSI cabinet file dates follow `SOURCE_DATE_EPOCH` instead of always being
-  1980-01-01.
-- CI builds the sample twice at different paths with separate caches, on
-  Linux and Windows, and requires identical installers across all builds.
-- Release notes record the `SOURCE_DATE_EPOCH` and commit used, with the
-  commands to rebuild the installers byte for byte.
 - Windows installers add a Start Menu shortcut for all users (MSI
   `Shortcut` table; IShellLink in the EXE stub) and remove it on
   uninstall. Turn it off with `.windows.start_menu_shortcut = false`.
@@ -193,4 +200,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CODE_OF_CONDUCT, SECURITY, CODEOWNERS, issue and pull request templates.
 - CI workflow that checks formatting and runs tests on Linux and Windows.
 
-[Unreleased]: https://github.com/ChristianPresley/zstaller/commits/main
+[Unreleased]: https://github.com/ChristianPresley/zstaller/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ChristianPresley/zstaller/releases/tag/v0.1.0

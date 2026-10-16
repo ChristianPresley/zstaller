@@ -24,13 +24,9 @@
 //!     /// `ctx.fail(...)` and returns null.
 //!     pub fn addPackage(ctx: *const api.Context, format: Format) ?LazyPath
 //!
-//! To add a platform (for example Fedora RPM or macOS pkg):
-//!   1. Add its targets to `Target` and its formats to `Format` in
-//!      `src/target.zig`, and an `Os` variant.
-//!   2. Write the package format in pure Zig under `src/platforms/<os>/`,
-//!      with unit tests, and expose it through `zstaller-pack`.
-//!   3. Create `src/build/<os>.zig` implementing `addPackage`, and add it
-//!      to `platforms` below.
+//! CONTRIBUTING.md ("Adding a platform") lists every step of adding one,
+//! for example Fedora RPM or macOS pkg. A platform module is registered in
+//! `platforms` below.
 
 const std = @import("std");
 const api = @import("api.zig");

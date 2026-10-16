@@ -25,8 +25,60 @@ get set up and what a pull request needs before it can merge.
 3. Format your code before committing:
 
    ```sh
-   zig fmt build.zig build.zig.zon src
+   zig fmt build.zig build.zig.zon src examples
    ```
+
+4. Build the sample's installers, which runs every packaging path end to
+   end, and the API reference:
+
+   ```sh
+   cd examples/sample && zig build installer
+   zig build docs
+   ```
+
+## Layout
+
+| Path | What it is |
+| --- | --- |
+| `build.zig`, `src/build/` | The build API consumers call: options, target loop, per-platform steps. |
+| `src/pack/main.zig` | `zstaller-pack`, the host tool the build runs to write each package. |
+| `src/platforms/` | The package formats in pure Zig: `.deb`, the MSI, the EXE payload and its installer stub. |
+| `src/archive/` | ar, tar and DEFLATE. |
+| `src/target.zig`, `src/naming.zig` | Targets, formats and output file names. |
+| `examples/sample/` | The end-to-end sample and its CI scripts. |
+
+## Adding a platform
+
+Each platform sits behind one interface, `src/build/Platform.zig`: a
+build-side module with
+
+```zig
+pub fn addPackage(ctx: *const api.Context, format: Format) ?LazyPath
+```
+
+that adds the steps producing `format` for `ctx.target` and returns the
+package file, or calls `ctx.fail(...)` and returns null on a
+configuration error. To add one, for example Fedora `.rpm` or macOS
+`.pkg`:
+
+1. **Targets and formats** in `src/target.zig`: an `Os` variant, the new
+   `Target` variants and any new `Format`. Then fill in every switch over
+   them: `Os.displayName`, `Format.extension`, `Target.os`, `cpuArch`,
+   `query` (the Zig target to cross-compile for), `formats`, `archName`,
+   `slug` and `parse`, plus any per-format helper such as `debArch`.
+2. **File names** in `naming.installerFileName` (`src/naming.zig`), with a
+   test.
+3. **The format** in pure Zig under `src/platforms/<os>/`, with unit tests,
+   and a `zstaller-pack` command for it in `src/pack/main.zig`.
+4. **The build side**: `src/build/<os>.zig` with `addPackage`, added to
+   `platforms` in `Platform.zig`. A compile error names any `Os` without
+   one.
+5. **Tests end to end**: a script under `examples/sample/scripts/` that
+   installs, runs and removes the package, a CI job in
+   `.github/workflows/ci.yml`, and the release checks in
+   `.github/workflows/release.yml` and `scripts/release.ps1`.
+6. **Docs**: the targets table and a "What the installers do" section in
+   `README.md`, and `CHANGELOG.md`.
 
 ## Commit messages
 
@@ -85,7 +137,7 @@ Apache License 2.0, as described in section 5 of the license.
 ## Pull request checklist
 
 - [ ] Conventional Commit title and commit bodies
-- [ ] `zig fmt --check build.zig build.zig.zon src` passes
+- [ ] `zig fmt --check build.zig build.zig.zon src examples` passes
 - [ ] `zig build test` passes
 - [ ] Tests added or updated for behavior changes
 - [ ] `CHANGELOG.md` updated under `Unreleased` for user-visible changes
