@@ -624,6 +624,20 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "Signature_", .type = T.str(72) | T.key },
         });
         try db.addRow(app_search, &.{ .{ .str = "EXEINSTALLDIR" }, .{ .str = "ExeInstallation" } });
+        // AppSearch reads the Signature table for every locator, so it
+        // must exist even with no rows (Windows fails with error 2228
+        // otherwise; Wine does not mind).
+        _ = try db.addTable("Signature", &.{
+            .{ .name = "Signature", .type = T.str(72) | T.key },
+            .{ .name = "FileName", .type = T.str(255) },
+            .{ .name = "MinVersion", .type = T.str(20) | T.nullable },
+            .{ .name = "MaxVersion", .type = T.str(20) | T.nullable },
+            .{ .name = "MinSize", .type = T.int4 | T.nullable },
+            .{ .name = "MaxSize", .type = T.int4 | T.nullable },
+            .{ .name = "MinDate", .type = T.int4 | T.nullable },
+            .{ .name = "MaxDate", .type = T.int4 | T.nullable },
+            .{ .name = "Languages", .type = T.str(255) | T.nullable },
+        });
         const reg_locator = try db.addTable("RegLocator", &.{
             .{ .name = "Signature_", .type = T.str(72) | T.key },
             .{ .name = "Root", .type = T.int2 },
@@ -912,6 +926,7 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
         .add_to_path = .always,
         .icon = "ICON",
         .shortcut = .{ .name = "Demo App", .target = "demo.exe", .desktop = .optional },
+        .exe_registry_key = "zstaller.demo",
         .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
     });
     try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
@@ -961,6 +976,16 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
     defer gpa.free(folders.stdout);
     defer gpa.free(folders.stderr);
     try testing.expect(std.mem.indexOf(u8, folders.stdout, "INSTALLDIR\tC1") != null);
+
+    // AppSearch needs the Signature table, even empty.
+    const tables = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "tables", path } });
+    defer gpa.free(tables.stdout);
+    defer gpa.free(tables.stderr);
+    for ([_][]const u8{ "AppSearch\n", "RegLocator\n", "Signature\n" }) |t| try testing.expect(std.mem.indexOf(u8, tables.stdout, t) != null);
+    const sig = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "Signature" } });
+    defer gpa.free(sig.stdout);
+    defer gpa.free(sig.stderr);
+    try testing.expect(std.mem.startsWith(u8, sig.stdout, "Signature\tFileName\tMinVersion\tMaxVersion\tMinSize\tMaxSize\tMinDate\tMaxDate\tLanguages\r\n"));
 }
 
 test "program shortcuts go to the Start Menu with their file (skipped when msiinfo is missing)" {
