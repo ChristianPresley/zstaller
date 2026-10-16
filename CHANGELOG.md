@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rebuilding installers after an application change is faster: the
+  application's files are appended to the linked setup program instead of
+  being compiled into it, so the setup program is no longer recompiled
+  for every Windows target. The sample's edit-and-rebuild went from 35.9s
+  to 22.2s. The ARM64 setup program is 76 KB smaller (simpler panic
+  handler). Signing the setup program afterwards keeps working: the
+  payload is found before the signature.
 - A silent EXE install (`/S`) with `add_to_path = .optional` now adds the
   install folder to PATH, as the wizard's ticked checkbox and the MSI's
   `ADDTOPATH=1` already did. Pass `/NOPATH` to leave it out.

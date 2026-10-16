@@ -16,9 +16,10 @@
 
 //! Windows EXE installer stub.
 //!
-//! zstaller compiles this program once per Windows target with the
-//! application's files embedded (`@import("payload")`) and its settings
-//! baked in (`@import("config")`). The same binary is copied into the
+//! zstaller compiles this program once per Windows target with its
+//! settings and wizard assets baked in (`@import("config")`,
+//! `@import("payload")`), then appends the application's files to the
+//! linked program (`overlay.zig`). The same binary is copied into the
 //! install directory as `uninstall.exe`; run under that name, or with
 //! `/uninstall`, it removes the application again.
 //!
@@ -32,12 +33,20 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zstaller = @import("zstaller");
 const config = @import("config");
-const payload_bytes = @import("payload").bytes;
+/// The application's files, read from the overlay of this program's own
+/// file at startup (see exe/overlay.zig). Empty when there is none.
+var payload_bytes: []const u8 = &.{};
 const w32 = @import("win32.zig");
 const wizard = @import("wizard.zig");
 
 const cli = zstaller.exe_cli;
 const payload = zstaller.exe_payload;
+const overlay = zstaller.exe_overlay;
+
+/// A panic prints its message without a stack trace. The full panic
+/// handler pulls in debug-info readers that would add about 75 KB to the
+/// ARM64 installer, which keeps its symbols (see `api.needsSymbols`).
+pub const panic = std.debug.simple_panic;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -126,6 +135,7 @@ pub fn main(init: std.process.Init) u8 {
     state.silent = cmd.silent;
     const self_path = std.process.executablePathAlloc(init.io, gpa) catch return @intFromEnum(ExitCode.failure);
     const action = cmd.action orelse cli.defaultAction(self_path);
+    if (action == .install or action == .uninstall) payload_bytes = readOwnPayload(init.io, gpa, self_path);
     const code: ExitCode = switch (action) {
         .help => blk: {
             state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ cli.help_text, w32.MB_ICONINFORMATION);
@@ -157,6 +167,13 @@ pub fn defaultInstallDir(s: *const State) ![]const u8 {
         if (cli.isValidInstallDir(previous)) return previous;
     }
     return cli.defaultInstallDir(s.gpa, @field(cli.InstallRoot, @tagName(config.install_root)), s.env, config.install_dir_name);
+}
+
+/// The payload appended to this program's file, or nothing when it cannot
+/// be read; installing then reports a damaged installer.
+fn readOwnPayload(io: Io, gpa: Allocator, self_path: []const u8) []const u8 {
+    const file = Io.Dir.cwd().readFileAlloc(io, self_path, gpa, .limited(4 << 30)) catch return &.{};
+    return overlay.extract(file) orelse &.{};
 }
 
 /// The installed version when it is newer than this installer's.
