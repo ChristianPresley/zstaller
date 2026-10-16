@@ -260,7 +260,9 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
     defer decoded.deinit(s.gpa);
 
     const previous = previousInstall(s);
-    const dir_existed = if (Io.Dir.openDirAbsolute(s.io, dir, .{})) |d| blk: {
+    // A fresh install that fails removes its folder, unless it got as far
+    // as registering, after which the user can uninstall it.
+    var keep_dir = if (Io.Dir.openDirAbsolute(s.io, dir, .{})) |d| blk: {
         d.close(s.io);
         break :blk true;
     } else |_| false;
@@ -275,7 +277,7 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
         for (decoded.entries[0..staged]) |e| {
             install_dir.deleteFile(s.io, stagedName(s, e.path)) catch {};
         }
-        if (!dir_existed) Io.Dir.cwd().deleteTree(s.io, dir) catch {};
+        if (!keep_dir) Io.Dir.cwd().deleteTree(s.io, dir) catch {};
     }
     for (decoded.entries) |e| {
         Progress.step(progress, total_bytes, total, e.path);
@@ -362,11 +364,21 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
     var owns_path_entry = path_change.keep_ownership;
     if (path_change.add) owns_path_entry = (try editSystemPath(s, dir, .add)) or owns_path_entry;
     try registerUninstall(s, dir, uninstaller_path, total_bytes, owns_path_entry, shortcuts);
+    keep_dir = true;
 
     // An upgrade to another folder: remove what the earlier version
     // installed in its folder.
     if (previous) |prev| {
         if (!cli.sameDir(prev.dir, dir)) removeFolderInstall(s, prev.dir);
+    }
+
+    if (config.after_install) |program| {
+        Progress.step(progress, total, total, "Running " ++ program ++ "...");
+        const code = runHook(s, dir, program, config.after_install_args) catch |err|
+            return s.report("{s} was installed, but {s} could not be started to finish setting it up: {t}.\n\n" ++
+                "Run Setup again, or uninstall " ++ config.display_name ++ " from Settings > Apps.", .{ config.display_name, program, err });
+        if (code != 0) return s.report("{s} was installed, but {s}, which finishes setting it up, failed with exit code {d}.\n\n" ++
+            "Run Setup again, or uninstall " ++ config.display_name ++ " from Settings > Apps.", .{ config.display_name, program, code });
     }
     Progress.step(progress, total, total, "");
 }
@@ -473,6 +485,15 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
         for (decoded.entries, list) |e, *p| p.* = e.path;
         break :blk list;
     };
+
+    // Undo what after_install did while the program is still there. A
+    // failure must not keep the user from uninstalling.
+    if (config.before_uninstall) |program| {
+        Progress.step(progress, 0, paths.len, "Running " ++ program ++ "...");
+        if (runHook(s, dir, program, config.before_uninstall_args)) |code| {
+            if (code != 0) std.debug.print("{s} exited with code {d}; uninstalling anyway\n", .{ program, code });
+        } else |err| std.debug.print("could not run {s}: {t}; uninstalling anyway\n", .{ program, err });
+    }
 
     for (paths, 0..) |p, i| {
         Progress.step(progress, i, paths.len, p);
@@ -968,6 +989,34 @@ fn removeAfterExit(s: *const State, self_path: []const u8, dir: []const u8) !voi
     }
     if (pi.hThread) |h| _ = w32.CloseHandle(h);
     if (pi.hProcess) |h| _ = w32.CloseHandle(h);
+}
+
+/// Runs the installed `program` with `args` (already a command line) from
+/// `dir`, without a window, and returns its exit code. A program that is
+/// not there (removed by hand) counts as success.
+fn runHook(s: *const State, dir: []const u8, program: []const u8, args: []const u8) !u32 {
+    const path = try std.fs.path.join(s.gpa, &.{ dir, program });
+    Io.Dir.accessAbsolute(s.io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => {},
+    };
+    const quoted = try cli.joinArgs(s.gpa, &.{path});
+    const line = if (args.len > 0) try std.fmt.allocPrint(s.gpa, "{s} {s}", .{ quoted, args }) else quoted;
+    const line_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line);
+    const path_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, path);
+    const dir_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, dir);
+    var si: w32.STARTUPINFOW = .{ .cb = @sizeOf(w32.STARTUPINFOW) };
+    var pi: w32.PROCESS_INFORMATION = undefined;
+    if (w32.CreateProcessW(path_w.ptr, line_w.ptr, null, null, 0, w32.CREATE_NO_WINDOW, null, dir_w.ptr, &si, &pi) == 0) {
+        return error.CreateProcessFailed;
+    }
+    if (pi.hThread) |h| _ = w32.CloseHandle(h);
+    const process = pi.hProcess orelse return error.CreateProcessFailed;
+    defer _ = w32.CloseHandle(process);
+    _ = w32.WaitForSingleObject(process, w32.INFINITE);
+    var code: w32.DWORD = 0;
+    if (w32.GetExitCodeProcess(process, &code) == 0) return error.CreateProcessFailed;
+    return code;
 }
 
 /// Creates a new folder in `parent` that only SYSTEM and administrators

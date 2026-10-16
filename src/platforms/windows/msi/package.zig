@@ -103,6 +103,16 @@ pub const ProgramShortcut = struct {
     target: []const u8,
 };
 
+/// A program from `files` that the MSI runs after installing, or before
+/// uninstalling. It runs as LocalSystem with the install directory as its
+/// working directory.
+pub const Hook = struct {
+    /// Install path of the program; must be one of `files` and an `.exe`.
+    target: []const u8,
+    /// Its command line arguments, already quoted (see `exe_cli.joinArgs`).
+    args: []const u8 = "",
+};
+
 pub const Product = struct {
     name: []const u8,
     /// Numeric `major.minor.build` version.
@@ -126,12 +136,19 @@ pub const Product = struct {
     shortcut: ?Shortcut = null,
     /// Start Menu shortcuts to other programs in `files`.
     program_shortcuts: []const ProgramShortcut = &.{},
+    /// Runs after every install, repair and upgrade; a non-zero exit
+    /// code fails the install, which Windows Installer then rolls back.
+    after_install: ?Hook = null,
+    /// Runs when the product is uninstalled (not when an upgrade removes
+    /// the old version), before its files are removed. Its exit code is
+    /// ignored.
+    before_uninstall: ?Hook = null,
     files: []const File,
     /// Seconds since the Unix epoch for the summary timestamps.
     timestamp: u64 = 0,
 };
 
-pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidVersion, NoFiles, TooManyFiles };
+pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidHook, InvalidVersion, NoFiles, TooManyFiles };
 
 const cabinet_name = "product.cab";
 
@@ -171,6 +188,27 @@ const registry_columns = [_]db_mod.Column{
 };
 const icon_key = "ProductIcon.ico";
 
+/// CustomAction type 18 (run an .exe installed with the product), deferred
+/// (0x400) and not impersonating the user (0x800).
+const custom_exe_deferred = 18 | 0x400 | 0x800;
+
+/// `text` with the characters Windows Installer's Formatted type treats
+/// specially written as `[\x]`, so that it reaches the program unchanged.
+fn escapeFormatted(a: Allocator, text: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (text) |c| switch (c) {
+        '[', ']', '{', '}' => try out.appendSlice(a, &.{ '[', '\\', c, ']' }),
+        else => try out.append(a, c),
+    };
+    return out.items;
+}
+
+test escapeFormatted {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("--x=[\\[]a[\\]] [\\{]b[\\}]", try escapeFormatted(arena.allocator(), "--x=[a] {b}"));
+}
+
 pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     if (p.files.len == 0) return error.NoFiles;
     if (p.files.len > 32000) return error.TooManyFiles;
@@ -209,6 +247,14 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(&.{0});
             h.update(ps.target);
             h.update(&.{0});
+        }
+        for ([_]?Hook{ p.after_install, p.before_uninstall }) |hook| {
+            if (hook) |x| {
+                h.update(x.target);
+                h.update(&.{0});
+                h.update(x.args);
+            }
+            h.update(&.{0xff});
         }
         var d: [32]u8 = undefined;
         h.final(&d);
@@ -584,6 +630,37 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ "PublishFeatures", 6300 },         .{ "PublishProduct", 6400 },    .{ "InstallFinalize", 6600 },
     };
     for (execute_actions) |act| try db.addRow(execute, &.{ .{ .str = act[0] }, .null, .{ .int = act[1] } });
+
+    // ---- Install and uninstall hooks: type 18 (an installed .exe) with
+    // the deferred and no-impersonate flags, so they run elevated as
+    // LocalSystem inside the install script, where a failure rolls back.
+    if (p.after_install != null or p.before_uninstall != null) {
+        const custom = try db.addTable("CustomAction", &.{
+            .{ .name = "Action", .type = T.str(72) | T.key },
+            .{ .name = "Type", .type = T.int2 },
+            .{ .name = "Source", .type = T.str(72) | T.nullable },
+            .{ .name = "Target", .type = T.str(255) | T.nullable },
+        });
+        const hooks = [_]struct { ?Hook, []const u8, i32, []const u8, i32 }{
+            .{ p.after_install, "ZstallerAfterInstall", custom_exe_deferred, "NOT REMOVE~=\"ALL\"", 6500 },
+            // Continue (0x40): a failing hook must not block uninstalling.
+            .{ p.before_uninstall, "ZstallerBeforeUninstall", custom_exe_deferred | 0x40, "REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE", 3100 },
+        };
+        for (hooks) |hk| {
+            const hook = hk[0] orelse continue;
+            const target = installed.get(hook.target) orelse return error.InvalidHook;
+            if (!std.ascii.endsWithIgnoreCase(hook.target, ".exe")) return error.InvalidHook;
+            const args = try escapeFormatted(a, hook.args);
+            if (args.len > 255) return error.InvalidHook;
+            try db.addRow(custom, &.{
+                .{ .str = hk[1] },
+                .{ .int = hk[2] },
+                .{ .str = target.file },
+                if (args.len > 0) Value{ .str = args } else .null,
+            });
+            try db.addRow(execute, &.{ .{ .str = hk[1] }, .{ .str = hk[3] }, .{ .int = hk[4] } });
+        }
+    }
     const ui = try db.addTable("InstallUISequence", &seq_cols);
     const ui_actions = [_]struct { []const u8, i32 }{
         .{ "FindRelatedProducts", 25 },    .{ "LaunchConditions", 100 }, .{ "ValidateProductID", 700 },
@@ -919,4 +996,45 @@ test "shortcut must point at an installed file" {
     product.shortcut = null;
     product.install_dir = "A\\..\\B";
     try testing.expectError(error.InvalidPath, write(gpa, &out.writer, product));
+}
+
+test "install and uninstall hooks" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var product: Product = .{
+        .name = "Demo",
+        .version = "1.0.0",
+        .manufacturer = "Example",
+        .description = "A demo",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "Demo",
+        .after_install = .{ .target = "demo.exe", .args = "--register [x]" },
+        .before_uninstall = .{ .target = "demo.exe", .args = "--unregister" },
+        .files = &.{ .{ .path = "demo.exe", .data = "MZ" }, .{ .path = "notes.txt", .data = "x" } },
+    };
+    var out: Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try write(gpa, &out.writer, product);
+    try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
+    const path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/demo.msi", .{tmp.sub_path});
+    defer gpa.free(path);
+    const actions = std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "CustomAction" } }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer gpa.free(actions.stdout);
+    defer gpa.free(actions.stderr);
+    try testing.expect(std.mem.indexOf(u8, actions.stdout, "ZstallerAfterInstall\t3090\tF1\t--register [\\[]x[\\]]") != null);
+    try testing.expect(std.mem.indexOf(u8, actions.stdout, "ZstallerBeforeUninstall\t3154\tF1\t--unregister") != null);
+
+    // Only installed .exe files can be hooks.
+    var bad: Writer.Allocating = .init(gpa);
+    defer bad.deinit();
+    product.after_install = .{ .target = "notes.txt" };
+    try testing.expectError(error.InvalidHook, write(gpa, &bad.writer, product));
+    product.after_install = .{ .target = "missing.exe" };
+    try testing.expectError(error.InvalidHook, write(gpa, &bad.writer, product));
 }

@@ -64,6 +64,7 @@ Assert-Signed $exe
 $dir = Join-Path $env:ProgramFiles 'Zstaller Sample'
 $app = Join-Path $dir 'sample.exe'
 $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Zstaller Sample.lnk'
+$registered = Join-Path $env:ProgramData 'Zstaller Sample\registered.txt'
 $desktop = Join-Path $env:PUBLIC 'Desktop\Zstaller Sample.lnk'
 
 function Invoke-Checked($file, $arguments) {
@@ -130,6 +131,8 @@ function Assert-Installed($expectOnPath) {
     $toolOut = (& $tool) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $toolOut -notmatch '^sample-tool \d') { throw "sample-tool printed: $toolOut" }
     Assert-Signed $tool
+    # after_install ran sample-tool --register.
+    if (-not (Test-Path $registered)) { throw "the after_install hook did not create $registered" }
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
     Assert-LockedDown $dir
     Assert-Signed $app
@@ -147,6 +150,7 @@ function Assert-Removed {
     for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
     if (Test-Path $dir) { throw "$dir still exists: $(Get-ChildItem $dir -Force | Out-String)" }
     if (Test-OnPath) { throw 'PATH entry was not removed' }
+    if (Test-Path $registered) { throw "the before_uninstall hook did not remove $registered" }
     if (Test-Path $shortcut) { throw 'Start Menu shortcut was not removed' }
     if (Test-Path $desktop) { throw 'desktop shortcut was not removed' }
 }

@@ -144,8 +144,32 @@ pub const WindowsOptions = struct {
     /// silent (`/S`) run force-quits them without asking. The MSI is not
     /// affected: Windows Installer handles files in use itself.
     close_running_apps: bool = false,
+    /// A program to run once the files are installed, for example to
+    /// register a service or write machine-wide configuration. It runs
+    /// after every install, upgrade and repair, so it must cope with
+    /// running more than once. If it exits with a non-zero code, the
+    /// install fails: the EXE reports it and leaves the files in place
+    /// (the user can uninstall), and the MSI rolls the install back.
+    after_install: ?InstallCommand = null,
+    /// A program to run when the application is uninstalled, before its
+    /// files are removed, to undo what `after_install` did. Upgrades do
+    /// not run it. Its exit code is ignored, so a failing hook never
+    /// blocks uninstalling.
+    before_uninstall: ?InstallCommand = null,
     /// The EXE installer's wizard: images, license and text.
     wizard: WizardOptions = .{},
+};
+
+/// A program the Windows installers run from the install directory, which
+/// is also its working directory. It runs with administrator rights, as
+/// the installing user for the EXE and as LocalSystem for the MSI, without
+/// a console window, and the installer waits for it to exit.
+pub const InstallCommand = struct {
+    /// Installed file name of an `.exe`: the application, one of
+    /// `programs`, or an `extra_files` destination.
+    program: []const u8,
+    /// Its arguments, quoted for you. At most 255 characters in all.
+    args: []const []const u8 = &.{},
 };
 
 pub const DebOptions = struct {

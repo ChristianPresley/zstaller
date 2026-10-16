@@ -170,6 +170,7 @@ pub const MOVEFILE_DELAY_UNTIL_REBOOT: DWORD = 0x4;
 pub extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) DWORD;
 pub extern "kernel32" fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: c_int, dwProcessId: DWORD) callconv(.winapi) ?HANDLE;
 pub extern "kernel32" fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) callconv(.winapi) DWORD;
+pub extern "kernel32" fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *DWORD) callconv(.winapi) c_int;
 pub extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
 pub extern "kernel32" fn MoveFileExW(
     lpExistingFileName: [*:0]const WCHAR,

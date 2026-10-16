@@ -279,6 +279,52 @@ test "ownedComponents" {
     try std.testing.expectEqual(1, ownedComponents("C:\\Widget", "C:\\Widget", "Widget"));
 }
 
+/// `args` joined into a command line that CommandLineToArgvW and the C
+/// runtime split back into the same arguments: each is quoted when it is
+/// empty or has a space, tab or quote, with backslashes before a quote
+/// doubled.
+pub fn joinArgs(gpa: Allocator, args: []const []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (args, 0..) |arg, i| {
+        if (i > 0) try out.append(gpa, ' ');
+        if (arg.len > 0 and std.mem.indexOfAny(u8, arg, " \t\"") == null) {
+            try out.appendSlice(gpa, arg);
+            continue;
+        }
+        try out.append(gpa, '"');
+        var backslashes: usize = 0;
+        for (arg) |c| {
+            if (c == '\\') {
+                backslashes += 1;
+                continue;
+            }
+            const n = if (c == '"') backslashes * 2 + 1 else backslashes;
+            try out.appendNTimes(gpa, '\\', n);
+            backslashes = 0;
+            try out.append(gpa, c);
+        }
+        try out.appendNTimes(gpa, '\\', backslashes * 2);
+        try out.append(gpa, '"');
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+test "joinArgs" {
+    const gpa = std.testing.allocator;
+    const cases = [_]struct { []const []const u8, []const u8 }{
+        .{ &.{ "register", "--quiet" }, "register --quiet" },
+        .{ &.{ "C:\\Program Files\\X", "" }, "\"C:\\Program Files\\X\" \"\"" },
+        .{ &.{"say \"hi\""}, "\"say \\\"hi\\\"\"" },
+        .{ &.{"dir\\ with space\\"}, "\"dir\\ with space\\\\\"" },
+        .{ &.{"a\\\\b"}, "a\\\\b" },
+    };
+    for (cases) |c| {
+        const got = try joinArgs(gpa, c[0]);
+        defer gpa.free(got);
+        try std.testing.expectEqualStrings(c[1], got);
+    }
+}
+
 /// Returns true when `path_var` (a ';'-separated list) contains `dir`.
 pub fn pathContains(path_var: []const u8, dir: []const u8) bool {
     var it = std.mem.splitScalar(u8, path_var, ';');

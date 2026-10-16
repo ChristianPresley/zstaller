@@ -213,6 +213,7 @@ Windows (`.windows = .{ ... }`):
 | `start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
 | `desktop_shortcut` | `.optional` | All-users desktop shortcut: `.never`, `.optional` (an unticked checkbox) or `.always`. |
 | `close_running_apps` | `false` | Let the EXE installer and uninstaller close programs and services that have the installation's files in use, after asking. See [Windows EXE](#windows-exe). |
+| `after_install`, `before_uninstall` | none | An installed `.exe` and its arguments, `.{ .program = "myapp.exe", .args = &.{"--register"} }`, run after installing or before uninstalling. See [Install and uninstall hooks](#install-and-uninstall-hooks). |
 | `wizard.license_file` | none | UTF-8 text the user must accept in the EXE wizard. |
 | `wizard.welcome_image`, `wizard.banner_image` | built-in artwork | Wizard images. See [Customizing the setup wizard](#customizing-the-setup-wizard). |
 | `wizard.accent_color` | `0x0067C0` | Color of the built-in artwork, `0xRRGGBB`. |
@@ -401,6 +402,35 @@ prints the same list to standard error and fails, or with
 
 Exit codes: 0 success, 1 error (including a newer version already
 installed), 2 cancelled, 3 bad arguments.
+
+#### Install and uninstall hooks
+
+Set `.windows.after_install` to run one of your installed programs once
+the files are in place, for example to register a service, a file type or
+machine-wide settings, and `.windows.before_uninstall` to undo it:
+
+```zig
+.windows = .{
+    .after_install = .{ .program = "myapp.exe", .args = &.{"--register"} },
+    .before_uninstall = .{ .program = "myapp.exe", .args = &.{"--unregister"} },
+},
+```
+
+`program` is an installed `.exe`: the application, one of `programs`, or
+an `extra_files` destination. Both installers run it from the install
+folder, which is also its working directory, without a window, and wait
+for it to exit. They run it with administrator rights: the EXE as the user
+who installs, the MSI as LocalSystem, so it should not rely on the user's
+profile, `HKEY_CURRENT_USER` or mapped drives.
+
+`after_install` runs after every install, upgrade and repair, so make it
+safe to run again. If it exits with a non-zero code, the install fails:
+the EXE reports the exit code and leaves the files in place so the user
+can run Setup again or uninstall, and the MSI rolls the install back.
+`before_uninstall` runs only when the application is uninstalled, not when
+an upgrade replaces it, before any file is removed; its exit code is
+ignored, so a broken hook never blocks uninstalling. The sample's
+`sample-tool` writes and removes `%ProgramData%\Zstaller Sample` this way.
 
 #### Customizing the setup wizard
 

@@ -18,6 +18,11 @@
 //! build.zig: a command-line tool installed next to `sample` (on PATH with
 //! it, in /usr/bin on Ubuntu). Prints the version, or the SHA-256 of the
 //! files it is given.
+//!
+//! On Windows the installers also run it as their install and uninstall
+//! hooks (`after_install` and `before_uninstall` in build.zig):
+//! `--register` writes machine-wide state to
+//! `%ProgramData%\Zstaller Sample`, and `--unregister` removes it.
 
 const std = @import("std");
 const options = @import("options");
@@ -32,6 +37,19 @@ pub fn main(init: std.process.Init) !void {
     if (args.len < 2) {
         try w.print("sample-tool {s}\nUsage: sample-tool <file>...  prints the SHA-256 of each file\n", .{options.version});
         return w.flush();
+    }
+    if (std.mem.eql(u8, args[1], "--register") or std.mem.eql(u8, args[1], "--unregister")) {
+        const program_data = init.environ_map.get("ProgramData") orelse return error.NoProgramData;
+        const dir = try std.fs.path.join(init.gpa, &.{ program_data, "Zstaller Sample" });
+        defer init.gpa.free(dir);
+        if (std.mem.eql(u8, args[1], "--register")) {
+            var d = try std.Io.Dir.cwd().createDirPathOpen(io, dir, .{});
+            defer d.close(io);
+            try d.writeFile(io, .{ .sub_path = "registered.txt", .data = options.version });
+        } else {
+            try std.Io.Dir.cwd().deleteTree(io, dir);
+        }
+        return;
     }
     for (args[1..]) |path| {
         const data = try std.Io.Dir.cwd().readFileAlloc(io, path, init.gpa, .unlimited);
