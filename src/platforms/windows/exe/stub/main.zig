@@ -767,11 +767,68 @@ fn createShortcut(s: *const State, folder: []const u8, target: []const u8, work_
 }
 
 /// Starts the installed application in its own window.
+/// Starts the installed application from the Finish page. Setup runs as
+/// administrator, and a program it starts directly would too: files it
+/// creates would belong to administrators and dragging files onto it from
+/// Explorer would not work. So the desktop's Explorer, which runs as the
+/// signed-in user, is asked to start it. Only when that is not possible
+/// (no Explorer shell) does Setup start it itself.
 pub fn launch(s: *const State, app_path: []const u8, dir: []const u8) void {
     const file_w = wide(s.gpa, app_path) catch return;
     const dir_w = wide(s.gpa, dir) catch return;
+    if (launchAsDesktopUser(file_w, dir_w)) return;
     const verb_w = wide(s.gpa, "open") catch return;
     _ = w32.ShellExecuteW(null, verb_w, file_w, null, dir_w, w32.SW_SHOWNORMAL);
+}
+
+fn launchAsDesktopUser(file: [*:0]const u16, dir: [*:0]const u16) bool {
+    const hr_init = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+    if (hr_init < 0) return false;
+    defer w32.CoUninitialize();
+
+    var windows: ?*anyopaque = null;
+    if (w32.CoCreateInstance(&w32.CLSID_ShellWindows, null, w32.CLSCTX_LOCAL_SERVER, &w32.IID_IShellWindows, &windows) < 0) return false;
+    defer w32.comRelease(windows.?);
+
+    // The desktop's shell browser.
+    const loc: w32.VARIANT = .{ .vt = w32.VT_I4, .value = .{ .lVal = w32.CSIDL_DESKTOP } };
+    const empty: w32.VARIANT = .{};
+    var hwnd: i32 = 0;
+    var desktop: ?*anyopaque = null;
+    if (w32.comMethod(w32.FindWindowSWFn, windows.?, w32.slot.FindWindowSW)(windows.?, &loc, &empty, w32.SWC_DESKTOP, &hwnd, w32.SWFO_NEEDDISPATCH, &desktop) != 0) return false;
+    defer w32.comRelease(desktop.?);
+
+    var provider: ?*anyopaque = null;
+    if (w32.comMethod(w32.QueryInterfaceFn, desktop.?, w32.slot.QueryInterface)(desktop.?, &w32.IID_IServiceProvider, &provider) < 0) return false;
+    defer w32.comRelease(provider.?);
+    var browser: ?*anyopaque = null;
+    if (w32.comMethod(w32.QueryServiceFn, provider.?, w32.slot.QueryService)(provider.?, &w32.SID_STopLevelBrowser, &w32.IID_IShellBrowser, &browser) < 0) return false;
+    defer w32.comRelease(browser.?);
+
+    // Its view's automation object, and the Shell object behind it.
+    var view: ?*anyopaque = null;
+    if (w32.comMethod(w32.QueryActiveShellViewFn, browser.?, w32.slot.QueryActiveShellView)(browser.?, &view) < 0) return false;
+    defer w32.comRelease(view.?);
+    var background: ?*anyopaque = null;
+    if (w32.comMethod(w32.GetItemObjectFn, view.?, w32.slot.GetItemObject)(view.?, w32.SVGIO_BACKGROUND, &w32.IID_IDispatch, &background) < 0) return false;
+    defer w32.comRelease(background.?);
+    var folder_view: ?*anyopaque = null;
+    if (w32.comMethod(w32.QueryInterfaceFn, background.?, w32.slot.QueryInterface)(background.?, &w32.IID_IShellFolderViewDual, &folder_view) < 0) return false;
+    defer w32.comRelease(folder_view.?);
+    var app: ?*anyopaque = null;
+    if (w32.comMethod(w32.GetApplicationFn, folder_view.?, w32.slot.get_Application)(folder_view.?, &app) < 0) return false;
+    defer w32.comRelease(app.?);
+    var shell: ?*anyopaque = null;
+    if (w32.comMethod(w32.QueryInterfaceFn, app.?, w32.slot.QueryInterface)(app.?, &w32.IID_IShellDispatch2, &shell) < 0) return false;
+    defer w32.comRelease(shell.?);
+
+    const file_b = w32.SysAllocString(file) orelse return false;
+    defer w32.SysFreeString(file_b);
+    const dir_b = w32.SysAllocString(dir) orelse return false;
+    defer w32.SysFreeString(dir_b);
+    const dir_v: w32.VARIANT = .{ .vt = w32.VT_BSTR, .value = .{ .bstrVal = dir_b } };
+    const show_v: w32.VARIANT = .{ .vt = w32.VT_I4, .value = .{ .lVal = w32.SW_SHOWNORMAL } };
+    return w32.comMethod(w32.ShellExecuteFn, shell.?, w32.slot.ShellExecute)(shell.?, file_b, empty, dir_v, empty, show_v) >= 0;
 }
 
 fn wide(gpa: Allocator, text: []const u8) ![:0]const u16 {
