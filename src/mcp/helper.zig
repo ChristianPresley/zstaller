@@ -191,11 +191,25 @@ fn currentProfile(init: std.process.Init, a: Allocator) !registrar.Profile {
         .config = try knownFolder(a, &win.FOLDERID_RoamingAppData),
     };
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
+    // `sudo -u` can pass the caller's XDG_CONFIG_HOME through, which
+    // would put this user's entries in someone else's files: use it only
+    // when it is this user's own folder.
     const xdg = init.environ_map.get("XDG_CONFIG_HOME");
     return .{
         .home = home,
-        .config = if (xdg != null and std.fs.path.isAbsolute(xdg.?)) xdg.? else try std.fs.path.join(a, &.{ home, ".config" }),
+        .config = if (xdg != null and std.fs.path.isAbsolute(xdg.?) and ownedByCaller(xdg.?)) xdg.? else try std.fs.path.join(a, &.{ home, ".config" }),
     };
+}
+
+fn ownedByCaller(path: []const u8) bool {
+    const linux = std.os.linux;
+    var st: linux.Statx = undefined;
+    var path_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    if (path.len >= path_buf.len) return false;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    if (linux.errno(linux.statx(linux.AT.FDCWD, path_buf[0..path.len :0], 0, .{ .UID = true }, &st)) != .SUCCESS) return false;
+    return st.uid == linux.getuid();
 }
 
 /// Every user profile on the machine.

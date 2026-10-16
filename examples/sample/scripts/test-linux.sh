@@ -104,7 +104,14 @@ mcp_home="$(getent passwd "$mcp_user" | cut -d: -f6)"
 sudo -u "$mcp_user" mkdir "$mcp_home/.claude"
 printf '{\n  "numStartups": 1\n}\n' | sudo -u "$mcp_user" tee "$mcp_home/.claude.json" >/dev/null
 sudo -u "$mcp_user" chmod 600 "$mcp_home/.claude.json"
-sudo -u "$mcp_user" env HOME="$mcp_home" /usr/lib/sample/zstaller-mcp register
+# Another user's settings folder passed through the environment (as sudo
+# can) must not be written to.
+other_config="$(mktemp -d)"
+mkdir -p "$other_config/Code/User"
+chmod -R 777 "$other_config"
+sudo -u "$mcp_user" env HOME="$mcp_home" XDG_CONFIG_HOME="$other_config" /usr/lib/sample/zstaller-mcp register
+if [ -e "$other_config/Code/User/mcp.json" ]; then echo "registering wrote to another user's settings"; exit 1; fi
+rm -rf "$other_config"
 sudo grep -q '"zstaller-sample": {"type":"stdio","command":"/usr/bin/sample-tool","args":\["mcp"\]}' "$mcp_home/.claude.json"
 sudo -u "$mcp_user" env HOME="$mcp_home" /usr/lib/sample/zstaller-mcp status | grep -q 'Claude Code: registered'
 
