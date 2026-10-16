@@ -32,6 +32,9 @@ pub fn build(b: *std.Build) void {
     const version = b.option([]const u8, "version", "Build the installers as this version instead of the one in build.zig.zon");
     // `-Dsign=<certificate thumbprint>` signs the Windows files with that
     // certificate from the Windows certificate store; see signFile.
+    // `-Dper-user` builds installers that install for the current user
+    // only, without administrator rights (windows.scope = .user).
+    const per_user = b.option(bool, "per-user", "Build Windows installers that install for the current user only") orelse false;
     sign_thumbprint = b.option([]const u8, "sign", "Sign the Windows files with this certificate (SHA-1 thumbprint, Windows only)");
     const installers = zstaller.addInstallers(b, .{
         .executable = createExe,
@@ -58,10 +61,13 @@ pub fn build(b: *std.Build) void {
             .close_running_apps = true,
             // Run sample-tool once the files are in place, and again before
             // they are removed, to set up and clean up machine-wide state.
-            .after_install = .{ .program = "sample-tool.exe", .args = &.{"--register"} },
-            .before_uninstall = .{ .program = "sample-tool.exe", .args = &.{"--unregister"} },
-            // Default install location: C:\Program Files\Zstaller Sample.
-            // Users can pick another folder in the wizard.
+            // (Per machine only: a per-user install cannot write there.)
+            .after_install = if (per_user) null else .{ .program = "sample-tool.exe", .args = &.{"--register"} },
+            .before_uninstall = if (per_user) null else .{ .program = "sample-tool.exe", .args = &.{"--unregister"} },
+            // Default install location: C:\Program Files\Zstaller Sample,
+            // or %LOCALAPPDATA%\Programs\Zstaller Sample per user. Users
+            // can pick another folder in the wizard.
+            .scope = if (per_user) .user else .machine,
             .install_root = .program_files,
             .install_dir_name = "Zstaller Sample",
             // Offer an (unticked) desktop shortcut checkbox.

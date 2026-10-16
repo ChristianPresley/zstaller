@@ -34,6 +34,15 @@ pub fn addPackage(ctx: *const api.Context, format: api.Format) ?LazyPath {
     };
 }
 
+fn installerManifest(b: *std.Build, scope: api.Scope) []const u8 {
+    return switch (scope) {
+        .machine => installer_manifest,
+        // A per-user setup must not ask for administrator rights, or it
+        // would install for the administrator instead of the user.
+        .user => std.mem.replaceOwned(u8, b.allocator, installer_manifest, "requireAdministrator", "asInvoker") catch @panic("OOM"),
+    };
+}
+
 const installer_manifest =
     \\<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     \\<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
@@ -67,6 +76,10 @@ const installer_manifest =
 /// The install directory name, checked: folders separated by '\\' (or
 /// '/'), each a valid Windows file name.
 fn installDirName(ctx: *const api.Context) ?[]const u8 {
+    if (ctx.options.windows.scope == .user and ctx.options.windows.install_root != .program_files) {
+        ctx.fail("windows.install_root does not apply with windows.scope = .user: per-user installs go in %LOCALAPPDATA%\\Programs", .{});
+        return null;
+    }
     const name = ctx.options.windows.install_dir_name orelse ctx.displayName();
     var it = std.mem.splitAny(u8, name, "\\/");
     while (it.next()) |seg| {
@@ -183,7 +196,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         \\pub const wizard = @embedFile("wizard.bin");
         \\
     );
-    const manifest = wf.add("installer.manifest", installer_manifest);
+    const manifest = wf.add("installer.manifest", installerManifest(b, o.windows.scope));
 
     const config = b.addOptions();
     config.addOption([]const u8, "name", ctx.meta.name);
@@ -192,7 +205,8 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "publisher", ctx.publisher());
     config.addOption([]const u8, "exe_name", exe_name);
     config.addOption([]const u8, "install_dir_name", dir_name);
-    config.addOption(cli.InstallRoot, "install_root", switch (o.windows.install_root) {
+    config.addOption(bool, "per_user", o.windows.scope == .user);
+    config.addOption(cli.InstallRoot, "install_root", if (o.windows.scope == .user) .user_programs else switch (o.windows.install_root) {
         .program_files => .program_files,
         .program_data => .program_data,
         .system_drive => .system_drive,
@@ -321,6 +335,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     run.addArgs(&.{ "--exe-registry-key", b.fmt("zstaller.{s}", .{ctx.meta.name}) });
     run.addArgs(&.{ "--platform", ctx.target.msiPlatform() });
     run.addArgs(&.{ "--install-dir", dir_name, "--install-root", @tagName(o.windows.install_root) });
+    if (o.windows.scope == .user) run.addArgs(&.{ "--per-user", "1" });
     run.addArgs(&.{ "--add-to-path", @tagName(o.windows.add_to_path) });
     if (o.windows.start_menu_shortcut or o.windows.desktop_shortcut != .never) {
         run.addArgs(&.{ "--shortcut-name", ctx.displayName(), "--shortcut-target", ctx.binary.out_filename });

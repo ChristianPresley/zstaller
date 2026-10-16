@@ -55,7 +55,10 @@ const manifest_name = ".zstaller-files";
 const uninstaller_name = cli.uninstaller_name;
 const uninstall_key_prefix = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\";
 pub const uninstall_key = uninstall_key_prefix ++ config.registry_key;
-const environment_key = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+/// Per machine, the installer writes to HKEY_LOCAL_MACHINE and the system
+/// PATH; per user, to HKEY_CURRENT_USER and the user's PATH.
+const registry_root = if (config.per_user) w32.HKEY_CURRENT_USER else w32.HKEY_LOCAL_MACHINE;
+const environment_key = if (config.per_user) "Environment" else "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
 
 pub const ExitCode = enum(u8) { success = 0, failure = 1, cancelled = 2, usage = 3 };
 
@@ -190,9 +193,12 @@ fn newerInstalled(s: *const State) ?[]const u8 {
 /// installers would otherwise share files under two Apps & Features
 /// entries, and uninstalling either would break the other.
 fn installedWithMsi() bool {
-    const sub_key = std.unicode.utf8ToUtf16LeStringLiteral("SOFTWARE\\Classes\\Installer\\UpgradeCodes\\" ++ config.msi_upgrade_key);
+    const sub_key = std.unicode.utf8ToUtf16LeStringLiteral(if (config.per_user)
+        "Software\\Microsoft\\Installer\\UpgradeCodes\\" ++ config.msi_upgrade_key
+    else
+        "SOFTWARE\\Classes\\Installer\\UpgradeCodes\\" ++ config.msi_upgrade_key);
     var key: w32.HKEY = undefined;
-    if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_key, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return false;
+    if (w32.RegOpenKeyExW(registry_root, sub_key, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return false;
     _ = w32.RegCloseKey(key);
     return true;
 }
@@ -400,6 +406,10 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
 /// Creates the install folder, or checks and secures an existing one, so
 /// that only administrators can change what is installed (`folder.zig`).
 fn prepareFolder(s: *State, dir: []const u8, previous: ?PreviousInstall) !void {
+    // A per-user install runs without administrator rights, in a folder
+    // the user owns: there is nothing to protect it from.
+    if (config.per_user) return Io.Dir.cwd().createDirPath(s.io, dir) catch |err|
+        s.report("Could not create the folder {s}: {t}", .{ dir, err });
     const default_dir = try cli.defaultInstallDir(s.gpa, @field(cli.InstallRoot, @tagName(config.install_root)), s.env, config.install_dir_name);
     const owned = cli.ownedComponents(dir, default_dir, config.install_dir_name);
     const has_install = if (previous) |prev| cli.sameDir(prev.dir, dir) else false;
@@ -837,16 +847,26 @@ fn registerUninstall(s: *const State, dir: []const u8, uninstaller: []const u8, 
     try setString(s.gpa, key, "ZstallerProgramShortcuts", shortcuts.programs, w32.REG_SZ);
 }
 
-/// The Start Menu programs folder for all users.
+/// The Start Menu programs folder for all users, or the user's own.
 fn startMenuDir(s: *const State) ![]const u8 {
+    if (config.per_user) return knownFolder(s, &w32.FOLDERID_Programs);
     const program_data = s.env.get("ProgramData") orelse s.env.get("ALLUSERSPROFILE") orelse "C:\\ProgramData";
     return std.fs.path.join(s.gpa, &.{ program_data, "Microsoft", "Windows", "Start Menu", "Programs" });
 }
 
-/// The desktop folder for all users.
+/// The desktop folder for all users, or the user's own (which may be
+/// redirected, for example to OneDrive).
 fn desktopDir(s: *const State) ![]const u8 {
+    if (config.per_user) return knownFolder(s, &w32.FOLDERID_Desktop);
     const public = s.env.get("PUBLIC") orelse "C:\\Users\\Public";
     return std.fs.path.join(s.gpa, &.{ public, "Desktop" });
+}
+
+fn knownFolder(s: *const State, id: *const w32.GUID) ![]const u8 {
+    var path: ?[*:0]u16 = null;
+    if (w32.SHGetKnownFolderPath(id, 0, null, &path) < 0) return error.FolderNotFound;
+    defer w32.CoTaskMemFree(path);
+    return std.unicode.wtf16LeToWtf8Alloc(s.gpa, std.mem.span(path.?));
 }
 
 /// Writes `<folder>\<name>.lnk` and returns its path.
@@ -885,7 +905,8 @@ fn createShortcut(s: *const State, folder: []const u8, name: []const u8, target:
 pub fn launch(s: *const State, app_path: []const u8, dir: []const u8) void {
     const file_w = wide(s.gpa, app_path) catch return;
     const dir_w = wide(s.gpa, dir) catch return;
-    if (launchAsDesktopUser(file_w, dir_w)) return;
+    // A per-user Setup already runs as the user.
+    if (!config.per_user and launchAsDesktopUser(file_w, dir_w)) return;
     const verb_w = wide(s.gpa, "open") catch return;
     _ = w32.ShellExecuteW(null, verb_w, file_w, null, dir_w, w32.SW_SHOWNORMAL);
 }
@@ -1034,10 +1055,11 @@ fn runHook(s: *const State, dir: []const u8, program: []const u8, args: []const 
 }
 
 /// Creates a new folder in `parent` that only SYSTEM and administrators
+/// (and, for a per-user install, the user who owns it)
 /// can open, with inheritance from `parent` turned off. A folder that
 /// already exists is never reused, as someone else may have made it.
 fn createPrivateDir(s: *const State, parent: []const u8, pid: w32.DWORD) ![]const u8 {
-    const sddl = std.unicode.utf8ToUtf16LeStringLiteral("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    const sddl = std.unicode.utf8ToUtf16LeStringLiteral(if (config.per_user) "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)" else "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
     var sd: ?*anyopaque = null;
     if (w32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, w32.SDDL_REVISION_1, &sd, null) == 0) {
         return error.SecurityDescriptorFailed;
@@ -1120,14 +1142,14 @@ pub fn messageBox(gpa: Allocator, owner: ?w32.HWND, text: []const u8, flags: u32
 fn createKey(gpa: Allocator, sub_key: []const u8) !w32.HKEY {
     const sub_w = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key);
     var key: w32.HKEY = undefined;
-    const rc = w32.RegCreateKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, 0, null, w32.REG_OPTION_NON_VOLATILE, w32.KEY_ALL_ACCESS | w32.KEY_WOW64_64KEY, null, &key, null);
+    const rc = w32.RegCreateKeyExW(registry_root, sub_w.ptr, 0, null, w32.REG_OPTION_NON_VOLATILE, w32.KEY_ALL_ACCESS | w32.KEY_WOW64_64KEY, null, &key, null);
     if (rc != w32.ERROR_SUCCESS) return error.RegistryAccessDenied;
     return key;
 }
 
 fn deleteKey(gpa: Allocator, sub_key: []const u8) void {
     const sub_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key) catch return;
-    _ = w32.RegDeleteKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, w32.KEY_WOW64_64KEY, 0);
+    _ = w32.RegDeleteKeyExW(registry_root, sub_w.ptr, w32.KEY_WOW64_64KEY, 0);
 }
 
 fn setString(gpa: Allocator, key: w32.HKEY, name: []const u8, value: []const u8, kind: w32.DWORD) !void {
@@ -1164,7 +1186,7 @@ fn queryString(gpa: Allocator, key: w32.HKEY, name: []const u8) ![]const u8 {
 pub fn readString(gpa: Allocator, sub_key: []const u8, name: []const u8) ?[]const u8 {
     const sub_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key) catch return null;
     var key: w32.HKEY = undefined;
-    if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;
+    if (w32.RegOpenKeyExW(registry_root, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;
     defer _ = w32.RegCloseKey(key);
     const value = queryString(gpa, key, name) catch return null;
     return if (value.len == 0) null else value;
@@ -1174,7 +1196,7 @@ fn readDword(sub_key: []const u8, name: []const u8, gpa: Allocator) ?u32 {
     const sub_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, sub_key) catch return null;
     const name_w = std.unicode.wtf8ToWtf16LeAllocZ(gpa, name) catch return null;
     var key: w32.HKEY = undefined;
-    if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;
+    if (w32.RegOpenKeyExW(registry_root, sub_w.ptr, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return null;
     defer _ = w32.RegCloseKey(key);
     var value: u32 = 0;
     var cb: w32.DWORD = @sizeOf(u32);

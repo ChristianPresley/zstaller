@@ -36,6 +36,8 @@ pub const InstallRoot = enum {
     program_data,
     /// The root of the Windows drive, `C:\`.
     system_drive,
+    /// `%LOCALAPPDATA%\Programs`, for per-user installs.
+    user_programs,
 };
 
 /// File name of the uninstaller the installer copies into the install
@@ -160,6 +162,11 @@ pub fn defaultInstallDir(gpa: Allocator, root: InstallRoot, env: *const std.proc
         .program_files => env.get("ProgramW6432") orelse env.get("ProgramFiles") orelse "C:\\Program Files",
         .program_data => env.get("ProgramData") orelse env.get("ALLUSERSPROFILE") orelse "C:\\ProgramData",
         .system_drive => env.get("SystemDrive") orelse "C:",
+        .user_programs => return std.mem.concat(gpa, u8, &.{
+            std.mem.trimEnd(u8, env.get("LOCALAPPDATA") orelse "C:\\Users\\Default\\AppData\\Local", "\\/"),
+            "\\Programs\\",
+            dir_name,
+        }),
     };
     return std.mem.concat(gpa, u8, &.{ std.mem.trimEnd(u8, base, "\\/"), "\\", dir_name });
 }

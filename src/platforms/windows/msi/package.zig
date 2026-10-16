@@ -130,6 +130,10 @@ pub const Product = struct {
     /// by '\\' or '/'.
     install_dir: []const u8,
     install_root: InstallRoot = .program_files,
+    /// Install for the current user only, without administrator rights:
+    /// into `%LOCALAPPDATA%\Programs\<install_dir>` (`install_root` is
+    /// not used), with the user's Start Menu, desktop, PATH and registry.
+    per_user: bool = false,
     add_to_path: PathMode = .never,
     icon: ?[]const u8 = null,
     /// Shortcuts for all users, removed on uninstall.
@@ -252,6 +256,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(ps.target);
             h.update(&.{0});
         }
+        h.update(&.{@intFromBool(p.per_user)});
         if (p.exe_registry_key) |key| h.update(key);
         h.update(&.{0});
         for ([_]?Hook{ p.after_install, p.before_uninstall }) |hook| {
@@ -284,13 +289,16 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ "ProductLanguage", "1033" },
         .{ "Manufacturer", p.manufacturer },
         .{ "UpgradeCode", &upgrade_str },
-        .{ "ALLUSERS", "1" },
         .{ "ARPNOMODIFY", "1" },
         .{ "ARPNOREPAIR", "1" },
         .{ "ARPCOMMENTS", p.description },
         .{ "SecureCustomProperties", "ADDTOPATH;DESKTOPSHORTCUT;NEWERVERSIONFOUND;OLDERVERSIONFOUND" },
     };
     for (props) |kv| try db.addRow(property, &.{ .{ .str = kv[0] }, .{ .str = kv[1] } });
+    // Without ALLUSERS, Windows Installer installs for the current user.
+    if (!p.per_user) try db.addRow(property, &.{ .{ .str = "ALLUSERS" }, .{ .str = "1" } });
+    // Registry roots: HKEY_CURRENT_USER or HKEY_LOCAL_MACHINE.
+    const reg_root: i32 = if (p.per_user) 1 else 2;
     if (p.add_to_path == .optional) try db.addRow(property, &.{ .{ .str = "ADDTOPATH" }, .{ .str = "1" } });
     if (p.shortcut) |sc| if (sc.desktop == .optional) try db.addRow(property, &.{ .{ .str = "DESKTOPSHORTCUT" }, .{ .str = "0" } });
     if (p.icon != null) try db.addRow(property, &.{ .{ .str = "ARPPRODUCTICON" }, .{ .str = icon_key } });
@@ -302,8 +310,13 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ .name = "DefaultDir", .type = T.str(255) | T.localizable },
     });
     try db.addRow(directory, &.{ .{ .str = "TARGETDIR" }, .null, .{ .str = "SourceDir" } });
-    const root = p.install_root.folder();
-    try db.addRow(directory, &.{ .{ .str = root }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+    const root = if (p.per_user) "LocalProgramsFolder" else p.install_root.folder();
+    if (p.per_user) {
+        try db.addRow(directory, &.{ .{ .str = "LocalAppDataFolder" }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+        try db.addRow(directory, &.{ .{ .str = root }, .{ .str = "LocalAppDataFolder" }, .{ .str = "Programs" } });
+    } else {
+        try db.addRow(directory, &.{ .{ .str = root }, .{ .str = "TARGETDIR" }, .{ .str = "." } });
+    }
 
     // `install_dir` may be nested ("Acme\\Widget"): one row per folder,
     // the last one INSTALLDIR.
@@ -420,7 +433,9 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     // otherwise inherit permissions that let users replace the programs.
     // Outside Program Files the same goes for the folders of a nested
     // `install_dir` above it, which users could otherwise rename.
-    if (root_component) |comp| {
+    // A per-user install lives in the user's own profile, which only
+    // they (and administrators) can change already.
+    if (root_component) |comp| if (!p.per_user) {
         const create_folder = try db.addTable("CreateFolder", &.{
             .{ .name = "Directory_", .type = T.str(72) | T.key },
             .{ .name = "Component_", .type = T.str(72) | T.key },
@@ -444,7 +459,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
                 .null,
             });
         }
-    }
+    };
 
     // ---- Registry: key paths for components that install no file.
     var registry_table: ?*db_mod.Table = null;
@@ -484,7 +499,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
                 .{ .str = "RDesktop" },
             });
             const registry = try registryTable(&db, &registry_table);
-            try db.addRow(registry, &.{ .{ .str = "RDesktop" }, .{ .int = 2 }, .{ .str = reg_key }, .{ .str = "DesktopShortcut" }, .{ .str = "1" }, .{ .str = "CDesktop" } });
+            try db.addRow(registry, &.{ .{ .str = "RDesktop" }, .{ .int = reg_root }, .{ .str = reg_key }, .{ .str = "DesktopShortcut" }, .{ .str = "1" }, .{ .str = "CDesktop" } });
             try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = "CDesktop" } });
             places[n] = .{ .key = "SDesktop", .folder = "DesktopFolder", .component = "CDesktop" };
             n += 1;
@@ -551,8 +566,8 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             if (p.add_to_path == .optional) Value{ .str = "ADDTOPATH=1" } else .null,
             .{ .str = "RPath" },
         });
-        try db.addRow(registry, &.{ .{ .str = "RPath" }, .{ .int = 2 }, .{ .str = reg_key }, .{ .str = "AddedToPath" }, .{ .str = "1" }, .{ .str = "CPath" } });
-        try db.addRow(environment, &.{ .{ .str = "EPath" }, .{ .str = "=-*Path" }, .{ .str = "[~];[INSTALLDIR]" }, .{ .str = "CPath" } });
+        try db.addRow(registry, &.{ .{ .str = "RPath" }, .{ .int = reg_root }, .{ .str = reg_key }, .{ .str = "AddedToPath" }, .{ .str = "1" }, .{ .str = "CPath" } });
+        try db.addRow(environment, &.{ .{ .str = "EPath" }, .{ .str = if (p.per_user) "=-Path" else "=-*Path" }, .{ .str = "[~];[INSTALLDIR]" }, .{ .str = "CPath" } });
         try db.addRow(feature_components, &.{ .{ .str = "Complete" }, .{ .str = "CPath" } });
     }
 
@@ -645,11 +660,10 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "Name", .type = T.str(255) | T.nullable },
             .{ .name = "Type", .type = T.int2 | T.nullable },
         });
-        const hklm = 2;
         const raw_64bit = 2 | 0x10;
         try db.addRow(reg_locator, &.{
             .{ .str = "ExeInstallation" },
-            .{ .int = hklm },
+            .{ .int = reg_root },
             .{ .str = try std.fmt.allocPrint(a, "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{s}", .{key}) },
             .{ .str = "InstallLocation" },
             .{ .int = raw_64bit },
@@ -693,10 +707,12 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "Source", .type = T.str(72) | T.nullable },
             .{ .name = "Target", .type = T.str(255) | T.nullable },
         });
+        // Per user, the hooks run as the user, like the rest of the install.
+        const hook_type: i32 = if (p.per_user) custom_exe_deferred & ~@as(i32, 0x800) else custom_exe_deferred;
         const hooks = [_]struct { ?Hook, []const u8, i32, []const u8, i32 }{
-            .{ p.after_install, "ZstallerAfterInstall", custom_exe_deferred, "NOT REMOVE~=\"ALL\"", 6500 },
+            .{ p.after_install, "ZstallerAfterInstall", hook_type, "NOT REMOVE~=\"ALL\"", 6500 },
             // Continue (0x40): a failing hook must not block uninstalling.
-            .{ p.before_uninstall, "ZstallerBeforeUninstall", custom_exe_deferred | 0x40, "REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE", 3100 },
+            .{ p.before_uninstall, "ZstallerBeforeUninstall", hook_type | 0x40, "REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE", 3100 },
         };
         for (hooks) |hk| {
             const hook = hk[0] orelse continue;
@@ -728,6 +744,8 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .template = p.platform.template(),
         .revision = &package_code,
         .timestamp = p.timestamp,
+        // Compressed (2), and per user no elevation is needed (8).
+        .word_count = if (p.per_user) 2 | 8 else 2,
     });
 }
 
@@ -1100,4 +1118,45 @@ test "install and uninstall hooks" {
     try testing.expectError(error.InvalidHook, write(gpa, &bad.writer, product));
     product.after_install = .{ .target = "missing.exe" };
     try testing.expectError(error.InvalidHook, write(gpa, &bad.writer, product));
+}
+
+test "per-user package" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var out: Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try write(gpa, &out.writer, .{
+        .name = "Demo",
+        .version = "1.0.0",
+        .manufacturer = "Example",
+        .description = "A demo",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "Demo",
+        .per_user = true,
+        .add_to_path = .always,
+        .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
+    const path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/demo.msi", .{tmp.sub_path});
+    defer gpa.free(path);
+    const Check = struct { table: []const u8, has: []const []const u8, lacks: []const []const u8 };
+    const checks = [_]Check{
+        .{ .table = "Property", .has = &.{}, .lacks = &.{"ALLUSERS"} },
+        .{ .table = "Directory", .has = &.{ "LocalProgramsFolder\tLocalAppDataFolder\tPrograms", "INSTALLDIR\tLocalProgramsFolder\tDemo" }, .lacks = &.{} },
+        .{ .table = "Environment", .has = &.{"EPath\t=-Path\t"}, .lacks = &.{} },
+        .{ .table = "Registry", .has = &.{"RPath\t1\t"}, .lacks = &.{} },
+    };
+    for (checks) |c| {
+        const r = std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, c.table } }) catch |err| switch (err) {
+            error.FileNotFound => return error.SkipZigTest,
+            else => |e| return e,
+        };
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        for (c.has) |text| try testing.expect(std.mem.indexOf(u8, r.stdout, text) != null);
+        for (c.lacks) |text| try testing.expect(std.mem.indexOf(u8, r.stdout, text) == null);
+    }
 }

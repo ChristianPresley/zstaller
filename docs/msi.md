@@ -65,6 +65,12 @@ cabinet are stored as separate streams.
   dir get the same, so users cannot rename them. Files inherit from
   `INSTALLDIR`. (`MsiLockPermissionsEx` needs Windows Installer 5.0, which
   every supported Windows has.)
+- **Per user** (`scope = .user`): no `ALLUSERS` property, so Windows
+  Installer installs for the current user; word count 10 (no elevation
+  needed); `INSTALLDIR` under `LocalAppDataFolder\Programs`; registry
+  key paths in `HKEY_CURRENT_USER`; the PATH entry `=-Path` in the
+  user's environment; no folder locking; hooks without the
+  no-impersonate flag, so they run as the user.
 - **EXE installation.** `AppSearch` reads `InstallLocation` from the
   EXE installer's `Uninstall\zstaller.<name>` key (64-bit view) into
   `EXEINSTALLDIR`, and the launch condition `Installed OR NOT

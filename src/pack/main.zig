@@ -305,7 +305,7 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const msi = zstaller.msi.package;
     const o = Options.parse(ctx.arena, args, 2, &.{
         "out",           "mtime",           "name",         "version",    "manufacturer",     "description", "upgrade-code",  "platform",           "install-dir",      "add-to-path",           "license",          "icon",
-        "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut", "release",     "after-install", "after-install-args", "before-uninstall", "before-uninstall-args", "exe-registry-key",
+        "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut", "release",     "after-install", "after-install-args", "before-uninstall", "before-uninstall-args", "exe-registry-key", "per-user",
     });
     var files: std.ArrayList(msi.File) = .empty;
     for (o.files.items) |f| {
@@ -347,6 +347,7 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         .after_install = if (o.get("after-install")) |t| .{ .target = t, .args = o.get("after-install-args") orelse "" } else null,
         .before_uninstall = if (o.get("before-uninstall")) |t| .{ .target = t, .args = o.get("before-uninstall-args") orelse "" } else null,
         .exe_registry_key = o.get("exe-registry-key"),
+        .per_user = o.get("per-user") != null,
         .files = files.items,
         .timestamp = o.mtime(),
     }) catch |err| switch (err) {

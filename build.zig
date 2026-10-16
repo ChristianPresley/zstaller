@@ -27,6 +27,7 @@ pub const PathMode = api.PathMode;
 pub const WindowsOptions = api.WindowsOptions;
 pub const WizardOptions = api.WizardOptions;
 pub const InstallRoot = api.InstallRoot;
+pub const Scope = api.Scope;
 pub const DesktopShortcut = api.DesktopShortcut;
 pub const DebOptions = api.DebOptions;
 pub const DebFile = api.DebFile;

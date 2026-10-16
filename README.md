@@ -205,6 +205,7 @@ Windows (`.windows = .{ ... }`):
 | `publisher` | package name | Publisher in Apps & Features, and the MSI Manufacturer. |
 | `display_name` | package name | Product name shown to users, and the shortcut name. |
 | `install_dir_name` | display name | Folder created in `install_root`; may nest, e.g. `"Acme\\Widget"`. |
+| `scope` | `.machine` | `.machine` installs for every user and needs administrator rights; `.user` installs for the current user only, without them. See [Per-user installs](#per-user-installs). |
 | `install_root` | `.program_files` | Where the default install folder goes: `.program_files`, `.program_data` or `.system_drive` (`C:\`). |
 | `allow_install_dir_change` | `true` | Let users pick another folder in the EXE wizard. |
 | `upgrade_code` | derived from name | MSI UpgradeCode. Set it once and never change it: a new one makes the next version install beside the old one instead of upgrading it. |
@@ -409,6 +410,26 @@ machine; to switch, uninstall the other first.
 
 Exit codes: 0 success, 1 error (including a newer version, or the
 MSI, already installed), 2 cancelled, 3 bad arguments.
+
+#### Per-user installs
+
+With `.windows.scope = .user`, both installers install for the user who
+runs them, without administrator rights or a UAC prompt, as many
+developer tools and editors do:
+
+| | `.machine` (default) | `.user` |
+| --- | --- | --- |
+| Install folder | `install_root\install_dir_name` | `%LOCALAPPDATA%\Programs\install_dir_name` |
+| Registration | `HKEY_LOCAL_MACHINE` | `HKEY_CURRENT_USER` |
+| Shortcuts | All users' Start Menu and desktop | The user's own |
+| PATH | System PATH | The user's PATH |
+| Hooks run as | Administrator (MSI: LocalSystem) | The user |
+
+The install folder is not locked down, as it is in the user's own profile.
+Other users of the machine do not see the application. A per-user and a
+per-machine build of the same product install side by side, so ship one or
+the other. The sample builds per-user installers with
+`zig build installer -Dper-user`.
 
 #### Install and uninstall hooks
 
