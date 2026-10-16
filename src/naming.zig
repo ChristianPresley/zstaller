@@ -79,15 +79,27 @@ pub fn debVersion(gpa: Allocator, version: []const u8) Allocator.Error![]u8 {
     return out;
 }
 
-/// Windows Installer ProductVersion: `major.minor.patch`, with each field
-/// clamped to MSI's limits (255.255.65535). Pre-release and build metadata
-/// are dropped because MSI versions are purely numeric.
-pub fn msiVersion(buf: []u8, v: std.SemanticVersion) []const u8 {
-    return std.fmt.bufPrint(buf, "{d}.{d}.{d}", .{
-        @min(v.major, 255),
-        @min(v.minor, 255),
-        @min(v.patch, 65535),
-    }) catch unreachable;
+/// Windows Installer ProductVersion: `major.minor.patch`. Pre-release and
+/// build metadata are dropped because MSI versions are purely numeric.
+/// Null when a field is over MSI's limits (255.255.65535): clamping would
+/// give different releases the same version and break upgrades.
+pub fn msiVersion(buf: []u8, v: std.SemanticVersion) ?[]const u8 {
+    if (v.major > 255 or v.minor > 255 or v.patch > 65535) return null;
+    return std.fmt.bufPrint(buf, "{d}.{d}.{d}", .{ v.major, v.minor, v.patch }) catch unreachable;
+}
+
+/// Returns true when `v` is a valid MSI ProductVersion: three numeric
+/// fields, at most 255.255.65535.
+pub fn isValidMsiVersion(v: []const u8) bool {
+    var it = std.mem.splitScalar(u8, v, '.');
+    const limits = [_]u32{ 255, 255, 65535 };
+    var n: usize = 0;
+    while (it.next()) |part| : (n += 1) {
+        if (n >= limits.len or part.len == 0) return false;
+        const x = std.fmt.parseInt(u32, part, 10) catch return false;
+        if (x > limits[n]) return false;
+    }
+    return n == limits.len;
 }
 
 /// Name of the SHA-256 sidecar written next to `file_name`.
@@ -120,8 +132,20 @@ test "debian names and versions" {
     try testing.expectEqualStrings("2.0.0+git-abc", v);
 }
 
-test "msi version clamps fields" {
+test "msi version strings" {
+    try testing.expect(isValidMsiVersion("26.10.0"));
+    try testing.expect(isValidMsiVersion("255.255.65535"));
+    try testing.expect(!isValidMsiVersion("26.10"));
+    try testing.expect(!isValidMsiVersion("256.0.0"));
+    try testing.expect(!isValidMsiVersion("1.0.0-rc.1"));
+    try testing.expect(!isValidMsiVersion("1..0"));
+}
+
+test "msi version refuses fields over the limits" {
     var buf: [32]u8 = undefined;
-    try testing.expectEqualStrings("1.2.3", msiVersion(&buf, .{ .major = 1, .minor = 2, .patch = 3, .pre = "rc.1" }));
-    try testing.expectEqualStrings("255.255.65535", msiVersion(&buf, .{ .major = 999, .minor = 300, .patch = 70000 }));
+    try testing.expectEqualStrings("1.2.3", msiVersion(&buf, .{ .major = 1, .minor = 2, .patch = 3, .pre = "rc.1" }).?);
+    try testing.expectEqualStrings("255.255.65535", msiVersion(&buf, .{ .major = 255, .minor = 255, .patch = 65535 }).?);
+    try testing.expectEqual(null, msiVersion(&buf, .{ .major = 2026, .minor = 1, .patch = 0 }));
+    try testing.expectEqual(null, msiVersion(&buf, .{ .major = 1, .minor = 256, .patch = 0 }));
+    try testing.expectEqual(null, msiVersion(&buf, .{ .major = 1, .minor = 0, .patch = 65536 }));
 }

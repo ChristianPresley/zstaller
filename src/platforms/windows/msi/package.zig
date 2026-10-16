@@ -94,6 +94,10 @@ pub const Product = struct {
     name: []const u8,
     /// Numeric `major.minor.build` version.
     version: []const u8,
+    /// The full release version, such as `1.0.0-rc.1`, when it differs from
+    /// `version`. Releases that share a numeric version get different
+    /// product codes, and a later one upgrades an earlier one in place.
+    release: []const u8 = "",
     manufacturer: []const u8,
     description: []const u8,
     /// `{GUID}`; stable across versions.
@@ -139,7 +143,8 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
 
     const upgrade_str = uuid.format(upgrade);
     const platform = @tagName(p.platform);
-    const product_code = uuid.format(uuid.v5Parts(upgrade, &.{ "product", p.version, platform }));
+    const release = if (p.release.len > 0) p.release else p.version;
+    const product_code = uuid.format(uuid.v5Parts(upgrade, &.{ "product", release, platform }));
     const package_code = blk: {
         var h = std.crypto.hash.sha2.Sha256.init(.{});
         for ([_][]const u8{ p.name, p.version, p.manufacturer, p.description, p.install_dir, @tagName(p.install_root), @tagName(p.add_to_path), platform }) |s| {
@@ -447,7 +452,11 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     });
     const migrate_features = 1;
     const only_detect = 2;
-    try db.addRow(upgrade_table, &.{ .{ .str = &upgrade_str }, .null, .{ .str = p.version }, .null, .{ .int = migrate_features }, .null, .{ .str = "OLDERVERSIONFOUND" } });
+    const version_max_inclusive = 0x200;
+    // Older versions and other releases of this same numeric version (a
+    // release candidate before the final release) are removed. A product
+    // never finds itself, so reinstalling the same package still repairs.
+    try db.addRow(upgrade_table, &.{ .{ .str = &upgrade_str }, .null, .{ .str = p.version }, .null, .{ .int = migrate_features | version_max_inclusive }, .null, .{ .str = "OLDERVERSIONFOUND" } });
     try db.addRow(upgrade_table, &.{ .{ .str = &upgrade_str }, .{ .str = p.version }, .null, .null, .{ .int = only_detect }, .null, .{ .str = "NEWERVERSIONFOUND" } });
 
     const launch = try db.addTable("LaunchCondition", &.{

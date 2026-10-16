@@ -235,7 +235,7 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const msi = zstaller.msi.package;
     const o = Options.parse(ctx.arena, args, 2, &.{
         "out",           "mtime",           "name",         "version",    "manufacturer",     "description", "upgrade-code", "platform", "install-dir", "add-to-path", "license", "icon",
-        "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut",
+        "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut", "release",
     });
     var files: std.ArrayList(msi.File) = .empty;
     for (o.files.items) |f| {
@@ -248,6 +248,7 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     msi.write(ctx.gpa, &out.writer, .{
         .name = o.required("name"),
         .version = o.required("version"),
+        .release = o.get("release") orelse "",
         .manufacturer = o.required("manufacturer"),
         .description = o.required("description"),
         .upgrade_code = o.required("upgrade-code"),
