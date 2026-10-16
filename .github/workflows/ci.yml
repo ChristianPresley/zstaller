@@ -21,6 +21,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -46,6 +47,7 @@ jobs:
         # The arm64 runner installs and runs the arm64 .deb natively.
         os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -69,6 +71,7 @@ jobs:
   sample-windows:
     name: Sample end-to-end (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -113,6 +116,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -135,6 +139,7 @@ jobs:
     name: Reproducible across hosts
     needs: reproducible
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -149,6 +154,7 @@ jobs:
     name: Sample end-to-end (windows-11-arm)
     needs: sample-linux
     runs-on: windows-11-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
