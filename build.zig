@@ -37,6 +37,7 @@ pub const ExecutableFn = api.ExecutableFn;
 pub const Program = api.Program;
 pub const SignFn = api.SignFn;
 pub const SignRequest = api.SignRequest;
+pub const InstallCommand = api.InstallCommand;
 pub const Output = api.Output;
 pub const Installers = api.Installers;
 

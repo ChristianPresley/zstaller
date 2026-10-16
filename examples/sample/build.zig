@@ -56,6 +56,10 @@ pub fn build(b: *std.Build) void {
             // If the sample is running, offer to force-quit it instead of
             // failing to replace or remove its files.
             .close_running_apps = true,
+            // Run sample-tool once the files are in place, and again before
+            // they are removed, to set up and clean up machine-wide state.
+            .after_install = .{ .program = "sample-tool.exe", .args = &.{"--register"} },
+            .before_uninstall = .{ .program = "sample-tool.exe", .args = &.{"--unregister"} },
             // Default install location: C:\Program Files\Zstaller Sample.
             // Users can pick another folder in the wizard.
             .install_root = .program_files,

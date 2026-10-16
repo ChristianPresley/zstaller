@@ -78,6 +78,30 @@ fn installDirName(ctx: *const api.Context) ?[]const u8 {
     return std.mem.replaceOwned(u8, ctx.b.allocator, name, "/", "\\") catch @panic("OOM");
 }
 
+/// An `InstallCommand` checked against the installed files, with its
+/// arguments joined into a command line.
+const Hook = struct { program: []const u8, args: []const u8 };
+
+fn hookCommand(ctx: *const api.Context, option: []const u8, command: ?api.InstallCommand) error{Reported}!?Hook {
+    const c = command orelse return null;
+    const installed = blk: {
+        if (std.mem.eql(u8, c.program, ctx.binary.out_filename)) break :blk true;
+        for (ctx.programs) |p| if (std.mem.eql(u8, c.program, p.name)) break :blk true;
+        for (ctx.options.extra_files) |f| if (std.mem.eql(u8, c.program, f.dest)) break :blk true;
+        break :blk false;
+    };
+    if (!installed or !std.ascii.endsWithIgnoreCase(c.program, ".exe")) {
+        ctx.fail("windows.{s}.program '{s}' is not an installed .exe: use the application's file name ({s}), a program's, or an extra_files destination", .{ option, c.program, ctx.binary.out_filename });
+        return error.Reported;
+    }
+    const args = cli.joinArgs(ctx.b.allocator, c.args) catch @panic("OOM");
+    if (args.len > 255) {
+        ctx.fail("windows.{s}.args are {d} characters long; the MSI allows 255", .{ option, args.len });
+        return error.Reported;
+    }
+    return .{ .program = c.program, .args = args };
+}
+
 /// MSI databases store text in Windows-1252. Reports the first character
 /// of `value` that it cannot store, naming the option it came from.
 fn fitsWindows1252(ctx: *const api.Context, option: []const u8, value: []const u8) bool {
@@ -181,6 +205,12 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const []const u8, "program_shortcut_names", shortcut_names.items);
     config.addOption([]const []const u8, "program_shortcut_targets", shortcut_targets.items);
     config.addOption(bool, "close_running_apps", o.windows.close_running_apps);
+    const after_install = hookCommand(ctx, "after_install", o.windows.after_install) catch return null;
+    const before_uninstall = hookCommand(ctx, "before_uninstall", o.windows.before_uninstall) catch return null;
+    config.addOption(?[]const u8, "after_install", if (after_install) |h| h.program else null);
+    config.addOption([]const u8, "after_install_args", if (after_install) |h| h.args else "");
+    config.addOption(?[]const u8, "before_uninstall", if (before_uninstall) |h| h.program else null);
+    config.addOption([]const u8, "before_uninstall_args", if (before_uninstall) |h| h.args else "");
     config.addOption(bool, "has_icon", o.icon != null);
     config.addOption([]const u8, "description", ctx.meta.description orelse "");
     config.addOption(cli.PathMode, "add_to_path", switch (o.windows.add_to_path) {
@@ -289,6 +319,15 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         if (!fitsWindows1252(ctx, b.fmt("programs[{d}].shortcut", .{i}), name)) return null;
         run.addArgs(&.{ "--program-shortcut", name, p.name });
     };
+    for ([_]struct { []const u8, ?api.InstallCommand }{
+        .{ "after_install", o.windows.after_install },
+        .{ "before_uninstall", o.windows.before_uninstall },
+    }) |h| {
+        const hook = (hookCommand(ctx, h[0], h[1]) catch return null) orelse continue;
+        if (!fitsWindows1252(ctx, b.fmt("windows.{s}.args", .{h[0]}), hook.args)) return null;
+        const flag = if (std.mem.eql(u8, h[0], "after_install")) "--after-install" else "--before-uninstall";
+        run.addArgs(&.{ flag, hook.program, b.fmt("{s}-args", .{flag}), hook.args });
+    }
     if (ctx.meta.license) |l| run.addArgs(&.{ "--license", l });
     if (ctx.icon) |icon| {
         run.addArg("--icon");

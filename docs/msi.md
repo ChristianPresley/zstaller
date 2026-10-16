@@ -45,7 +45,7 @@ root entry carries the Windows Installer CLSID
 Tables written: `Property`, `Directory`, `Component`, `File`,
 `FeatureComponents`, `Registry`, `Environment`, `Feature`, `Media`, `Icon`,
 `Shortcut`, `CreateFolder`, `MsiLockPermissionsEx`, `Upgrade`,
-`LaunchCondition`, `InstallExecuteSequence`,
+`LaunchCondition`, `CustomAction` (only with hooks), `InstallExecuteSequence`,
 `InstallUISequence`. The icon (a binary column of the `Icon` table) and the
 cabinet are stored as separate streams.
 
@@ -65,6 +65,17 @@ cabinet are stored as separate streams.
   dir get the same, so users cannot rename them. Files inherit from
   `INSTALLDIR`. (`MsiLockPermissionsEx` needs Windows Installer 5.0, which
   every supported Windows has.)
+- **Hooks.** `after_install` and `before_uninstall` are `CustomAction`
+  rows of type 3090: 18 (run an installed `.exe`, `Source` is its `File`
+  key, `Target` its arguments with `[`, `]`, `{` and `}` escaped as
+  `[\x]`), deferred (0x400) and no-impersonate (0x800), so they run in
+  the install script as LocalSystem. `ZstallerAfterInstall` is sequenced
+  at 6500, after the files and registration, with condition
+  `NOT REMOVE~="ALL"`; a non-zero exit code fails the install and rolls
+  it back. `ZstallerBeforeUninstall` (3154: adds 0x40, ignore the exit
+  code) runs at 3100, before `RemoveShortcuts` and `RemoveFiles`, with
+  condition `REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE`, so the removal
+  of an old version during a major upgrade does not run it.
 - The cabinet is stored as stream `product.cab` and referenced from the
   `Media` table as `#product.cab`.
 - **Upgrades.** The product code is derived from the upgrade code, the

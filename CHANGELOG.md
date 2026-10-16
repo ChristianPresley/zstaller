@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows install and uninstall hooks: `windows.after_install` runs an
+  installed program once the files are in place (a failure fails the EXE
+  install and rolls the MSI back) and `windows.before_uninstall` runs one
+  before they are removed. The MSI runs them as deferred custom actions
+  as LocalSystem. The sample registers and unregisters `sample-tool`
+  this way, and the Windows end-to-end test checks both.
+
 - `.deb` packages pass lintian: they include `changelog.gz` and a
   lintian override for the static binaries, compress manual pages, and
   take a `deb.long_description` and a `deb.copyright` notice. The Linux
