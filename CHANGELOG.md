@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A silent EXE install (`/S`) with `add_to_path = .optional` now adds the
+  install folder to PATH, as the wizard's ticked checkbox and the MSI's
+  `ADDTOPATH=1` already did. Pass `/NOPATH` to leave it out.
+- Installing an older version over a newer one with the EXE is refused,
+  as with the MSI.
+
 - Release installers are built locally instead of by GitHub Actions. The
   new `scripts/release.ps1` builds every installer from scratch with
   `SOURCE_DATE_EPOCH` set to the commit time, checks the checksums, copies
@@ -59,6 +65,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper now runs from a new folder only administrators and SYSTEM can
   write to, instead of a predictable file name in `%TEMP%`, which for
   SYSTEM uninstalls is writable by every user.
+- MSI packages for pre-release versions no longer share a product code
+  with the final release, which made installing `1.0.0` over
+  `1.0.0-rc.1` fail with error 1638. Versions over MSI's limits
+  (255.255.65535) fail the build instead of being clamped, and the new
+  `windows.msi_version` option sets the MSI version for schemes such as
+  calendar versions.
+- MSI strings may use every Windows-1252 character, including curly
+  quotes, en and em dashes and the euro and trademark signs.
+- EXE upgrades write the new files before removing old ones, so a
+  failure leaves the earlier version working, and a failed fresh install
+  removes its folder. An upgrade to another folder cleans up the old one.
+- The EXE no longer removes a PATH entry it did not add, no longer leaves
+  its entry behind when PATH is unticked on upgrade, and keeps the rest of
+  the system PATH exactly as it was.
+- A damaged EXE installer reports that it is damaged instead of failing
+  unpredictably: the payload carries a SHA-256 checked before unpacking.
+- "Launch" on the Finish page starts the application as the signed-in
+  user instead of as administrator.
 
 - The EXE uninstaller no longer fails with a bare "AccessDenied" when the
   application is running. Before it changes anything, it checks for
