@@ -332,7 +332,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "MsiLockPermissionsEx", .type = T.str(72) | T.key },
             .{ .name = "LockObject", .type = T.str(72) },
             .{ .name = "Table", .type = T.str(32) },
-            .{ .name = "SDDL", .type = T.str(0) },
+            .{ .name = "SDDLText", .type = T.str(0) },
             .{ .name = "Condition", .type = T.str(255) | T.nullable },
         });
         const locked = if (p.install_root == .program_files) 0 else parent_count;
@@ -779,6 +779,8 @@ test "msitools can read the package (skipped when msiinfo is missing)" {
     const locks = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "MsiLockPermissionsEx" } });
     defer gpa.free(locks.stdout);
     defer gpa.free(locks.stderr);
+    // Windows Installer finds the columns by these names.
+    try testing.expect(std.mem.startsWith(u8, locks.stdout, "MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\tCondition\r\n"));
     try testing.expect(std.mem.indexOf(u8, locks.stdout, "L0\tINSTALLPARENT0\tCreateFolder\t" ++ locked_sddl) != null);
     try testing.expect(std.mem.indexOf(u8, locks.stdout, "L1\tINSTALLDIR\tCreateFolder\t" ++ locked_sddl) != null);
     const folders = try std.process.run(gpa, io, .{ .argv = &.{ "msiinfo", "export", path, "CreateFolder" } });

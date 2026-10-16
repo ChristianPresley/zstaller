@@ -48,7 +48,24 @@ $desktop = Join-Path $env:PUBLIC 'Desktop\Zstaller Sample.lnk'
 
 function Invoke-Checked($file, $arguments) {
     $p = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru
-    if ($p.ExitCode -ne 0) { throw "$file $arguments exited with $($p.ExitCode)" }
+    if ($p.ExitCode -ne 0) {
+        Show-MsiLog $arguments
+        throw "$file $arguments exited with $($p.ExitCode)"
+    }
+}
+
+# Prints what led up to the first failed action in an msiexec /l*v log,
+# so a failure can be read from the job output.
+function Show-MsiLog($arguments) {
+    if ($arguments -notmatch '/l\*v "([^"]+)"') { return }
+    $log = $Matches[1]
+    if (-not (Test-Path $log)) { return }
+    $lines = Get-Content $log
+    $fail = ($lines | Select-String -SimpleMatch 'Return value 3.' | Select-Object -First 1).LineNumber
+    $errors = $lines | Select-String -Pattern 'Error \d{4}|error code|Note: 1: ' | Select-Object -First 20
+    Write-Host "== $log"
+    $errors | ForEach-Object { Write-Host $_.Line }
+    if ($fail) { $lines[[Math]::Max(0, $fail - 40)..($fail - 1)] | ForEach-Object { Write-Host $_ } }
 }
 
 function Test-OnPath {
