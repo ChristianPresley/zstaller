@@ -262,6 +262,23 @@ pub fn sameDir(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(normalizeDir(a), normalizeDir(b));
 }
 
+/// How many trailing folders of `dir` belong to the application: every
+/// folder of `dir_name` (`Acme\\Widget` is two) when `dir` is the default
+/// location `default_dir`, else only the install folder itself.
+pub fn ownedComponents(dir: []const u8, default_dir: []const u8, dir_name: []const u8) usize {
+    if (!sameDir(dir, default_dir)) return 1;
+    var n: usize = 0;
+    var it = std.mem.tokenizeAny(u8, dir_name, "\\/");
+    while (it.next()) |_| n += 1;
+    return @max(n, 1);
+}
+
+test "ownedComponents" {
+    try std.testing.expectEqual(2, ownedComponents("C:\\Acme\\Widget", "c:\\acme\\widget\\", "Acme\\Widget"));
+    try std.testing.expectEqual(1, ownedComponents("D:\\Tools\\Widget", "C:\\Acme\\Widget", "Acme\\Widget"));
+    try std.testing.expectEqual(1, ownedComponents("C:\\Widget", "C:\\Widget", "Widget"));
+}
+
 /// Returns true when `path_var` (a ';'-separated list) contains `dir`.
 pub fn pathContains(path_var: []const u8, dir: []const u8) bool {
     var it = std.mem.splitScalar(u8, path_var, ';');

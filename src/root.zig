@@ -36,6 +36,7 @@ pub const exe_overlay = @import("platforms/windows/exe/overlay.zig");
 pub const exe_cli = @import("platforms/windows/exe/stub/cli.zig");
 pub const wizard_assets = @import("platforms/windows/exe/wizard_assets.zig");
 pub const wizard_art = @import("platforms/windows/exe/stub/art.zig");
+pub const exe_acl = @import("platforms/windows/exe/stub/acl.zig");
 pub const pe = @import("platforms/windows/pe.zig");
 pub const msi = struct {
     pub const cfb = @import("platforms/windows/msi/cfb.zig");

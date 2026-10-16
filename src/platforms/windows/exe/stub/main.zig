@@ -38,6 +38,7 @@ const config = @import("config");
 var payload_bytes: []const u8 = &.{};
 const w32 = @import("win32.zig");
 const wizard = @import("wizard.zig");
+const install_folder = @import("folder.zig");
 
 const cli = zstaller.exe_cli;
 const payload = zstaller.exe_payload;
@@ -263,8 +264,7 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
         d.close(s.io);
         break :blk true;
     } else |_| false;
-    Io.Dir.cwd().createDirPath(s.io, dir) catch |err|
-        return s.report("Could not create the folder {s}: {t}", .{ dir, err });
+    try prepareFolder(s, dir, previous);
     var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
     defer install_dir.close(s.io);
 
@@ -357,6 +357,38 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
     Progress.step(progress, total, total, "");
 }
 
+/// Creates the install folder, or checks and secures an existing one, so
+/// that only administrators can change what is installed (`folder.zig`).
+fn prepareFolder(s: *State, dir: []const u8, previous: ?PreviousInstall) !void {
+    const default_dir = try cli.defaultInstallDir(s.gpa, @field(cli.InstallRoot, @tagName(config.install_root)), s.env, config.install_dir_name);
+    const owned = cli.ownedComponents(dir, default_dir, config.install_dir_name);
+    const has_install = if (previous) |prev| cli.sameDir(prev.dir, dir) else false;
+    var failure: install_folder.Failure = .{};
+    install_folder.prepare(s.gpa, dir, owned, has_install, &failure) catch |err| return switch (err) {
+        error.OutOfMemory => err,
+        error.Refused => switch (failure.kind) {
+            .none => unreachable,
+            .link => s.report(
+                "{s} is a link to another location, so Setup will not install there.\n\n" ++
+                    "Choose another folder.",
+                .{failure.path},
+            ),
+            .others_can_change => s.report(
+                "Users other than administrators can rename or change {s}, so the " ++
+                    "programs installed in it could be replaced.\n\n" ++
+                    "Choose a folder in Program Files, or one that only administrators can change.",
+                .{failure.path},
+            ),
+            .not_empty => s.report(
+                "{s} already holds files that other users can change.\n\n" ++
+                    "Choose an empty folder or a new one.",
+                .{failure.path},
+            ),
+        },
+        else => s.report("Could not set up the folder {s}: {t}", .{ dir, err }),
+    };
+}
+
 /// What an earlier installation recorded in the registry.
 const PreviousInstall = struct {
     dir: []const u8,
@@ -391,7 +423,9 @@ fn removeFolderInstall(s: *const State, dir: []const u8) void {
     var old_dir = Io.Dir.openDirAbsolute(s.io, dir, .{}) catch return;
     defer old_dir.close(s.io);
     const paths = readManifest(s, old_dir) orelse return;
-    for (paths) |p| old_dir.deleteFile(s.io, p) catch {};
+    for (paths) |p| {
+        if (!install_folder.crossesLink(s.gpa, dir, p)) old_dir.deleteFile(s.io, p) catch {};
+    }
     old_dir.deleteFile(s.io, manifest_name) catch {};
     old_dir.deleteFile(s.io, uninstaller_name) catch {};
     removeEmptyParents(s, old_dir, paths);
@@ -428,6 +462,9 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
 
     for (paths, 0..) |p, i| {
         Progress.step(progress, i, paths.len, p);
+        // Through a junction someone put in the folder, this would delete
+        // a file somewhere else.
+        if (install_folder.crossesLink(s.gpa, dir, p)) continue;
         install_dir.deleteFile(s.io, p) catch |err| switch (err) {
             error.FileNotFound => {},
             // A program that `findInUse` cannot see has the file open.

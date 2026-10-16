@@ -792,6 +792,97 @@ pub extern "kernel32" fn LocalFree(hMem: ?*anyopaque) callconv(.winapi) ?*anyopa
 pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const WCHAR, lpSecurityAttributes: ?*const SECURITY_ATTRIBUTES) callconv(.winapi) c_int;
 pub extern "kernel32" fn GetTickCount64() callconv(.winapi) u64;
 
+// ---- Securing the install folder
+
+pub const READ_CONTROL: DWORD = 0x0002_0000;
+pub const WRITE_DAC: DWORD = 0x0004_0000;
+pub const WRITE_OWNER: DWORD = 0x0008_0000;
+pub const FILE_READ_ATTRIBUTES: DWORD = 0x0080;
+pub const FILE_SHARE_ALL: DWORD = 0x7;
+pub const OPEN_EXISTING: DWORD = 3;
+pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
+pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
+pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x10;
+pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x400;
+pub const ERROR_PATH_NOT_FOUND: DWORD = 3;
+pub const ERROR_ACCESS_DENIED: DWORD = 5;
+pub const ERROR_NO_MORE_FILES: DWORD = 18;
+pub const SE_FILE_OBJECT: c_int = 1;
+pub const OWNER_SECURITY_INFORMATION: DWORD = 0x1;
+pub const DACL_SECURITY_INFORMATION: DWORD = 0x4;
+pub const TOKEN_ADJUST_PRIVILEGES: DWORD = 0x20;
+pub const SE_PRIVILEGE_ENABLED: DWORD = 0x2;
+
+pub const FILETIME = extern struct { low: DWORD, high: DWORD };
+
+pub const BY_HANDLE_FILE_INFORMATION = extern struct {
+    dwFileAttributes: DWORD,
+    ftCreationTime: FILETIME,
+    ftLastAccessTime: FILETIME,
+    ftLastWriteTime: FILETIME,
+    dwVolumeSerialNumber: DWORD,
+    nFileSizeHigh: DWORD,
+    nFileSizeLow: DWORD,
+    nNumberOfLinks: DWORD,
+    nFileIndexHigh: DWORD,
+    nFileIndexLow: DWORD,
+};
+
+pub const WIN32_FIND_DATAW = extern struct {
+    dwFileAttributes: DWORD,
+    ftCreationTime: FILETIME,
+    ftLastAccessTime: FILETIME,
+    ftLastWriteTime: FILETIME,
+    nFileSizeHigh: DWORD,
+    nFileSizeLow: DWORD,
+    dwReserved0: DWORD,
+    dwReserved1: DWORD,
+    cFileName: [260]WCHAR,
+    cAlternateFileName: [14]WCHAR,
+};
+
+pub const LUID = extern struct { LowPart: DWORD, HighPart: i32 };
+pub const TOKEN_PRIVILEGES_1 = extern struct {
+    PrivilegeCount: DWORD = 1,
+    Luid: LUID,
+    Attributes: DWORD,
+};
+
+pub extern "kernel32" fn CreateFileW(
+    lpFileName: [*:0]const WCHAR,
+    dwDesiredAccess: DWORD,
+    dwShareMode: DWORD,
+    lpSecurityAttributes: ?*const SECURITY_ATTRIBUTES,
+    dwCreationDisposition: DWORD,
+    dwFlagsAndAttributes: DWORD,
+    hTemplateFile: ?HANDLE,
+) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn GetFileInformationByHandle(hFile: HANDLE, lpFileInformation: *BY_HANDLE_FILE_INFORMATION) callconv(.winapi) c_int;
+pub extern "kernel32" fn FindFirstFileW(lpFileName: [*:0]const WCHAR, lpFindFileData: *WIN32_FIND_DATAW) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn FindNextFileW(hFindFile: HANDLE, lpFindFileData: *WIN32_FIND_DATAW) callconv(.winapi) c_int;
+pub extern "kernel32" fn FindClose(hFindFile: HANDLE) callconv(.winapi) c_int;
+pub extern "advapi32" fn GetSecurityInfo(
+    handle: HANDLE,
+    ObjectType: c_int,
+    SecurityInfo: DWORD,
+    ppsidOwner: ?*?[*]const u8,
+    ppsidGroup: ?*?[*]const u8,
+    ppDacl: ?*?[*]const u8,
+    ppSacl: ?*?[*]const u8,
+    ppSecurityDescriptor: *?*anyopaque,
+) callconv(.winapi) DWORD;
+pub extern "advapi32" fn SetKernelObjectSecurity(Handle: HANDLE, SecurityInformation: DWORD, SecurityDescriptor: *anyopaque) callconv(.winapi) c_int;
+pub extern "kernel32" fn GetCurrentProcess() callconv(.winapi) HANDLE;
+pub extern "advapi32" fn LookupPrivilegeValueW(lpSystemName: ?[*:0]const WCHAR, lpName: [*:0]const WCHAR, lpLuid: *LUID) callconv(.winapi) c_int;
+pub extern "advapi32" fn AdjustTokenPrivileges(
+    TokenHandle: HANDLE,
+    DisableAllPrivileges: c_int,
+    NewState: ?*const TOKEN_PRIVILEGES_1,
+    BufferLength: DWORD,
+    PreviousState: ?*anyopaque,
+    ReturnLength: ?*DWORD,
+) callconv(.winapi) c_int;
+
 // ---- Process owners and services
 
 pub const TOKEN_QUERY: DWORD = 0x8;
