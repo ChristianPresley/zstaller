@@ -173,7 +173,6 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     stub_mod.linkSystemLibrary("shell32", .{});
     stub_mod.linkSystemLibrary("gdi32", .{});
     stub_mod.linkSystemLibrary("comctl32", .{});
-    stub_mod.linkSystemLibrary("rstrtmgr", .{});
     if (o.icon) |icon| {
         _ = wf.addCopyFile(icon, "app.ico");
         const rc = wf.add("installer.rc", "1 ICON \"app.ico\"\n");

@@ -718,9 +718,13 @@ pub const RM_PROCESS_INFO = extern struct {
     bRestartable: c_int,
 };
 
-pub extern "rstrtmgr" fn RmStartSession(pSessionHandle: *DWORD, dwSessionFlags: DWORD, strSessionKey: [*]WCHAR) callconv(.winapi) DWORD;
-pub extern "rstrtmgr" fn RmEndSession(dwSessionHandle: DWORD) callconv(.winapi) DWORD;
-pub extern "rstrtmgr" fn RmRegisterResources(
+// The Restart Manager is loaded at run time from System32 (see
+// `RestartManager.load`) instead of being imported. RstrtMgr.dll is not a
+// KnownDLL, so a static import would be looked up next to setup.exe first,
+// and a planted copy in the Downloads folder would run elevated.
+pub const RmStartSessionFn = *const fn (pSessionHandle: *DWORD, dwSessionFlags: DWORD, strSessionKey: [*]WCHAR) callconv(.winapi) DWORD;
+pub const RmEndSessionFn = *const fn (dwSessionHandle: DWORD) callconv(.winapi) DWORD;
+pub const RmRegisterResourcesFn = *const fn (
     dwSessionHandle: DWORD,
     nFiles: u32,
     rgsFileNames: ?[*]const [*:0]const WCHAR,
@@ -729,13 +733,63 @@ pub extern "rstrtmgr" fn RmRegisterResources(
     nServices: u32,
     rgsServiceNames: ?[*]const [*:0]const WCHAR,
 ) callconv(.winapi) DWORD;
-pub extern "rstrtmgr" fn RmGetList(
+pub const RmGetListFn = *const fn (
     dwSessionHandle: DWORD,
     pnProcInfoNeeded: *u32,
     pnProcInfo: *u32,
     rgAffectedApps: ?[*]RM_PROCESS_INFO,
     lpdwRebootReasons: *DWORD,
 ) callconv(.winapi) DWORD;
+
+pub const RestartManager = struct {
+    RmStartSession: RmStartSessionFn,
+    RmEndSession: RmEndSessionFn,
+    RmRegisterResources: RmRegisterResourcesFn,
+    RmGetList: RmGetListFn,
+
+    /// Loads rstrtmgr.dll from System32 only. Null when it is missing.
+    pub fn load() ?RestartManager {
+        const name = std.unicode.utf8ToUtf16LeStringLiteral("rstrtmgr.dll");
+        const module = LoadLibraryExW(name, null, LOAD_LIBRARY_SEARCH_SYSTEM32) orelse return null;
+        var rm: RestartManager = undefined;
+        inline for (@typeInfo(RestartManager).@"struct".fields) |f| {
+            const proc = GetProcAddress(module, f.name ++ "") orelse return null;
+            @field(rm, f.name) = @ptrCast(@alignCast(proc));
+        }
+        return rm;
+    }
+};
+
+// ---- Loading system DLLs safely
+
+pub const HMODULE = *opaque {};
+pub const FARPROC = *const anyopaque;
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x00000800;
+
+pub extern "kernel32" fn SetDefaultDllDirectories(DirectoryFlags: DWORD) callconv(.winapi) c_int;
+pub extern "kernel32" fn LoadLibraryExW(lpLibFileName: [*:0]const WCHAR, hFile: ?HANDLE, dwFlags: DWORD) callconv(.winapi) ?HMODULE;
+pub extern "kernel32" fn GetProcAddress(hModule: HMODULE, lpProcName: [*:0]const u8) callconv(.winapi) ?FARPROC;
+
+// ---- A folder only administrators and SYSTEM can write to
+
+pub const ERROR_ALREADY_EXISTS: DWORD = 183;
+pub const SDDL_REVISION_1: DWORD = 1;
+
+pub const SECURITY_ATTRIBUTES = extern struct {
+    nLength: DWORD = @sizeOf(SECURITY_ATTRIBUTES),
+    lpSecurityDescriptor: ?*anyopaque,
+    bInheritHandle: c_int = 0,
+};
+
+pub extern "advapi32" fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+    StringSecurityDescriptor: [*:0]const WCHAR,
+    StringSDRevision: DWORD,
+    SecurityDescriptor: *?*anyopaque,
+    SecurityDescriptorSize: ?*u32,
+) callconv(.winapi) c_int;
+pub extern "kernel32" fn LocalFree(hMem: ?*anyopaque) callconv(.winapi) ?*anyopaque;
+pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const WCHAR, lpSecurityAttributes: ?*const SECURITY_ATTRIBUTES) callconv(.winapi) c_int;
+pub extern "kernel32" fn GetTickCount64() callconv(.winapi) u64;
 
 // ---- Process owners and services
 
