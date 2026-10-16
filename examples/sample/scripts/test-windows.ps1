@@ -270,19 +270,7 @@ if (-not (Test-OnPath)) { throw 'uninstall removed a PATH entry it did not add' 
 [Environment]::SetEnvironmentVariable('Path', $machinePath, 'Machine')
 Assert-ExeRemoved
 
-function Get-Installer($version, $kind) {
-    $suffix = if ($kind -eq 'msi') { '.msi' } else { '-setup.exe' }
-    $file = "sample-$version-windows-$arch$suffix"
-    if (Test-Path $file) { return (Resolve-Path $file).Path }
-    return $null
-}
-
-$exe101 = Get-Installer '1.0.1' 'exe'
-$msi101 = Get-Installer '1.0.1' 'msi'
-$msiRc = Get-Installer '1.0.1-rc.1' 'msi'
-if (-not ($exe101 -and $msi101 -and $msiRc)) {
-    Write-Host 'Skipping upgrade tests: no 1.0.1 installers here'
-    # Per user: no administrator paths, keys or PATH entries are touched.
+# Per user: no administrator paths, keys or PATH entries are touched.
 if (Test-Path per-user) {
     $puExe = (Resolve-Path "per-user/sample-1.0.0-windows-$arch-setup.exe").Path
     $puMsi = (Resolve-Path "per-user/sample-1.0.0-windows-$arch.msi").Path
@@ -322,7 +310,19 @@ if (Test-Path per-user) {
     Assert-PerUserRemoved
 }
 
-Write-Host 'Windows end-to-end test passed'
+function Get-Installer($version, $kind) {
+    $suffix = if ($kind -eq 'msi') { '.msi' } else { '-setup.exe' }
+    $file = "sample-$version-windows-$arch$suffix"
+    if (Test-Path $file) { return (Resolve-Path $file).Path }
+    return $null
+}
+
+$exe101 = Get-Installer '1.0.1' 'exe'
+$msi101 = Get-Installer '1.0.1' 'msi'
+$msiRc = Get-Installer '1.0.1-rc.1' 'msi'
+if (-not ($exe101 -and $msi101 -and $msiRc)) {
+    Write-Host 'Skipping upgrade tests: no 1.0.1 installers here'
+    Write-Host 'Windows end-to-end test passed'
     exit 0
 }
 
