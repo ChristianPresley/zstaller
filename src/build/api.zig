@@ -128,6 +128,8 @@ pub const WindowsOptions = struct {
     /// calendar versions such as `2026.10.0`. It must grow with every
     /// release, or upgrades stop working.
     msi_version: ?[]const u8 = null,
+    /// Whether the install folder is added to the system PATH. See
+    /// `PathMode`.
     add_to_path: PathMode = .optional,
     /// Add a Start Menu shortcut, named after `display_name`, that opens
     /// the application. Both installers remove it on uninstall.
@@ -151,8 +153,11 @@ pub const DebOptions = struct {
     /// for .deb output unless `windows.publisher` is set, which is then
     /// used instead.
     maintainer: ?[]const u8 = null,
+    /// `Section` field, e.g. `utils`, `devel`, `net`.
     section: []const u8 = "utils",
+    /// `Priority` field.
     priority: []const u8 = "optional",
+    /// `Homepage` field: the project's URL.
     homepage: ?[]const u8 = null,
     /// `Depends` field. Binaries are statically linked (musl) so this is
     /// normally not needed.
@@ -161,13 +166,24 @@ pub const DebOptions = struct {
 
 /// Values that replace the ones read from build.zig.zon.
 pub const MetadataOverrides = struct {
+    /// Package name: letters, digits, '_', '-' and '.'. Use it for names
+    /// Zig does not accept as `.name` in build.zig.zon, such as `my-app`.
+    /// It also changes the default MSI upgrade code, so set
+    /// `windows.upgrade_code` before renaming a released package.
     name: ?[]const u8 = null,
+    /// Semantic version, e.g. one computed from `git describe`.
     version: ?[]const u8 = null,
+    /// One-line description. Required for MSI and .deb output.
     description: ?[]const u8 = null,
+    /// SPDX license identifier, e.g. `MIT`.
     license: ?[]const u8 = null,
 };
 
 /// Builds the application binary for one target. Called once per target.
+///
+/// It is a plain function, so it cannot use modules or dependencies that
+/// `build` created for the native target. Create every module it needs
+/// inside it, with the `target` and `optimize` it is given.
 pub const ExecutableFn = *const fn (
     b: *Build,
     target: Build.ResolvedTarget,
@@ -175,17 +191,27 @@ pub const ExecutableFn = *const fn (
 ) *Build.Step.Compile;
 
 pub const Options = struct {
+    /// Builds the application for one target. See `ExecutableFn`.
     executable: ExecutableFn,
+    /// The targets to package. Each Windows target gets an MSI and an EXE,
+    /// each Ubuntu target a .deb.
     targets: []const Target = Target.all,
+    /// Optimize mode of the packaged binaries. ReleaseSafe keeps debug
+    /// info unless the `executable` function sets `.strip = true`.
     optimize: std.builtin.OptimizeMode = .ReleaseSafe,
     /// Manifest to read metadata from, relative to the build root.
     manifest_path: []const u8 = "build.zig.zon",
+    /// Replacements for the metadata read from the manifest.
     metadata: MetadataOverrides = .{},
     /// Windows `.ico` file used for the installer, the uninstall entry and
     /// the MSI product icon.
     icon: ?LazyPath = null,
+    /// Files installed next to the application (`/usr/share/<package>/`
+    /// on Ubuntu).
     extra_files: []const ExtraFile = &.{},
+    /// Settings for the Windows EXE and MSI installers.
     windows: WindowsOptions = .{},
+    /// Settings for the Ubuntu .deb packages.
     deb: DebOptions = .{},
     /// Subdirectory of the install prefix that receives the installers.
     install_subdir: []const u8 = "installers",
@@ -203,17 +229,24 @@ pub const Options = struct {
 /// (MS-DOS format) timestamp can hold.
 pub const default_source_date_epoch: u64 = 315532800;
 
+/// One installer built by `addInstallers`.
 pub const Output = struct {
     target: Target,
+    /// `.msi`, `.exe` or `.deb`.
     format: Format,
+    /// The name it is installed under, e.g. `myapp-1.2.0-windows-x86_64.msi`.
     file_name: []const u8,
+    /// The installer in the build cache, for further steps such as
+    /// uploading.
     file: LazyPath,
+    /// Its `.sha256` file, in `sha256sum` format.
     checksum: LazyPath,
 };
 
 pub const Installers = struct {
     /// Depends on every installer and checksum being built and installed.
     step: *Build.Step,
+    /// Every installer, in target order.
     outputs: []const Output,
 };
 

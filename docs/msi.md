@@ -1,7 +1,7 @@
 # How zstaller writes MSI packages
 
 An MSI file is a Windows Installer database stored in an OLE compound file.
-zstaller writes it directly in Zig, in three layers:
+zstaller writes it directly in Zig, in four layers:
 
 | Layer | Source | Specification |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ root entry carries the Windows Installer CLSID
 
 Tables written: `Property`, `Directory`, `Component`, `File`,
 `FeatureComponents`, `Registry`, `Environment`, `Feature`, `Media`, `Icon`,
-`Upgrade`, `LaunchCondition`, `InstallExecuteSequence`,
+`Shortcut`, `Upgrade`, `LaunchCondition`, `InstallExecuteSequence`,
 `InstallUISequence`. The icon (a binary column of the `Icon` table) and the
 cabinet are stored as separate streams.
 

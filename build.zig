@@ -49,8 +49,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // The library module. Consumers will reach it through
-    // `b.dependency("zstaller", .{}).module("zstaller")`.
+    // The packaging library itself (archives, MSI, payloads). It is what
+    // zstaller-pack and the tests are built from; consumers use
+    // `addInstallers` above, not this module.
     const mod = b.addModule("zstaller", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -67,6 +68,23 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_mod_tests.step);
+
+    // API reference for build.zig users: `zig build docs`, then serve
+    // zig-out/docs (for example `python3 -m http.server -d zig-out/docs`).
+    const docs_obj = b.addObject(.{
+        .name = "zstaller",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("build.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+    const docs = b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    b.step("docs", "Build the API reference into zig-out/docs").dependOn(&docs.step);
 
     const pack = api.createPackTool(b);
     const pack_step = b.step("pack", "Build the zstaller-pack host tool");
