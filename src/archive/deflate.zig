@@ -31,14 +31,30 @@ pub fn compress(gpa: Allocator, data: []const u8, container: Container) Allocato
     return out.toOwnedSlice();
 }
 
+/// gzip at the highest compression level, with the header saying so (as
+/// Debian expects of manual pages and changelogs).
+pub fn gzipBest(gpa: Allocator, data: []const u8) Allocator.Error![]u8 {
+    var out: std.Io.Writer.Allocating = try .initCapacity(gpa, data.len / 2 + 64);
+    errdefer out.deinit();
+    try compressLevel(gpa, &out.writer, data, .gzip, .best);
+    const bytes = try out.toOwnedSlice();
+    // XFL: 2 = maximum compression (RFC 1952, section 2.3.1).
+    bytes[8] = 2;
+    return bytes;
+}
+
 /// Compresses `data` into `w`. `w` must be an allocating or otherwise
 /// unbounded writer; write failures are reported as OutOfMemory.
 pub fn compressTo(gpa: Allocator, w: *std.Io.Writer, data: []const u8, container: Container) Allocator.Error!void {
+    return compressLevel(gpa, w, data, container, .default);
+}
+
+fn compressLevel(gpa: Allocator, w: *std.Io.Writer, data: []const u8, container: Container, options: flate.Compress.Options) Allocator.Error!void {
     const window = try gpa.alloc(u8, flate.max_window_len);
     defer gpa.free(window);
     const c = try gpa.create(flate.Compress);
     defer gpa.destroy(c);
-    c.* = flate.Compress.init(w, window, container, .default) catch return error.OutOfMemory;
+    c.* = flate.Compress.init(w, window, container, options) catch return error.OutOfMemory;
     c.writer.writeAll(data) catch return error.OutOfMemory;
     c.finish() catch return error.OutOfMemory;
 }
@@ -65,6 +81,17 @@ test "round trip all containers" {
         defer gpa.free(unpacked);
         try std.testing.expectEqualStrings(input, unpacked);
     }
+}
+
+test "gzipBest round trips and marks maximum compression" {
+    const gpa = std.testing.allocator;
+    const input = "man page text " ** 200;
+    const gz = try gzipBest(gpa, input);
+    defer gpa.free(gz);
+    try std.testing.expectEqual(@as(u8, 2), gz[8]);
+    const back = try decompress(gpa, gz, .gzip);
+    defer gpa.free(back);
+    try std.testing.expectEqualStrings(input, back);
 }
 
 test "gzip header magic" {

@@ -44,6 +44,10 @@ for deb in sample_1.0.0_*.deb; do
   grep -q -- '-rwxr-xr-x .* ./usr/bin/sample-tool$' <<<"$contents"
 done
 test "$(dpkg-deb --field sample_1.0.0_arm64.deb Architecture)" = arm64
+if command -v lintian >/dev/null; then
+  echo "== lintian"
+  lintian --fail-on error,warning sample_1.0.0_*.deb
+fi
 
 arch="$(dpkg --print-architecture)"
 deb="sample_1.0.0_${arch}.deb"
@@ -57,7 +61,7 @@ test "$(sample-tool | sed -n 1p)" = "sample-tool 1.0.0"
 test "$(sample-tool /usr/share/sample/README.md | cut -d' ' -f1)" = "$(sha256sum /usr/share/sample/README.md | cut -d' ' -f1)"
 test -f /usr/share/sample/README.md
 # Listed rather than tested on disk: minimized images skip man pages.
-dpkg -L sample | grep -x /usr/share/man/man1/sample-tool.1 >/dev/null
+dpkg -L sample | grep -x /usr/share/man/man1/sample-tool.1.gz >/dev/null
 test -f /usr/share/icons/hicolor/256x256/apps/sample.png
 grep -q '^Exec=/usr/bin/sample$' /usr/share/applications/sample.desktop
 if command -v desktop-file-validate >/dev/null; then desktop-file-validate /usr/share/applications/sample.desktop; fi

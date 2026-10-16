@@ -156,8 +156,8 @@ fn cmdChecksum(ctx: Ctx, args: []const []const u8) !void {
 
 fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
     const o = Options.parse(ctx.arena, args, 3, &.{
-        "out",      "mtime",   "name",     "version", "arch",   "maintainer", "description", "section", "priority", "homepage", "depends", "license", "copyright",
-        "icon-png", "preinst", "postinst", "prerm",   "postrm",
+        "out",      "mtime",   "name",     "version", "arch",   "maintainer",       "description", "section", "priority", "homepage", "depends", "license", "copyright",
+        "icon-png", "preinst", "postinst", "prerm",   "postrm", "long-description",
     });
     const name = o.required("name");
     if (!zstaller.naming.isValidDebPackageName(name))
@@ -166,7 +166,27 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
     var files: std.ArrayList(zstaller.deb.File) = .empty;
     for (o.files.items) |f| {
         const mode = std.fmt.parseInt(u32, f[2], 8) catch fail("invalid mode '{s}'", .{f[2]});
-        files.append(ctx.arena, .{ .path = f[1], .data = ctx.readFile(f[0]), .mode = mode }) catch oom();
+        var path = f[1];
+        var data = ctx.readFile(f[0]);
+        // Debian policy: manual pages are compressed.
+        if (zstaller.deb.isUncompressedManPage(path)) {
+            data = zstaller.archive.deflate.gzipBest(ctx.arena, data) catch oom();
+            path = std.fmt.allocPrint(ctx.arena, "{s}.gz", .{path}) catch oom();
+        }
+        files.append(ctx.arena, .{ .path = path, .data = data, .mode = mode }) catch oom();
+    }
+    {
+        // A changelog, and a note for lintian that the binaries are
+        // statically linked on purpose (zstaller builds them with musl).
+        const changelog = zstaller.deb.changelogFile(ctx.arena, name, o.required("version"), o.required("maintainer"), o.mtime()) catch oom();
+        files.append(ctx.arena, .{
+            .path = std.fmt.allocPrint(ctx.arena, "/usr/share/doc/{s}/changelog.gz", .{name}) catch oom(),
+            .data = zstaller.archive.deflate.gzipBest(ctx.arena, changelog) catch oom(),
+        }) catch oom();
+        files.append(ctx.arena, .{
+            .path = std.fmt.allocPrint(ctx.arena, "/usr/share/lintian/overrides/{s}", .{name}) catch oom(),
+            .data = std.fmt.allocPrint(ctx.arena, "{s}: statically-linked-binary\n", .{name}) catch oom(),
+        }) catch oom();
     }
     if (o.get("license")) |license| {
         const path = std.fmt.allocPrint(ctx.arena, "/usr/share/doc/{s}/copyright", .{name}) catch oom();
@@ -200,6 +220,7 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         .architecture = o.required("arch"),
         .maintainer = o.required("maintainer"),
         .description = o.required("description"),
+        .long_description = if (o.get("long-description")) |path| ctx.readFile(path) else null,
         .section = o.get("section") orelse "utils",
         .priority = o.get("priority") orelse "optional",
         .homepage = o.get("homepage"),

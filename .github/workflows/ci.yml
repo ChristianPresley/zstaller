@@ -53,6 +53,9 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Install lintian
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lintian
+
       - name: Build installers, verify and install the .deb
         run: examples/sample/scripts/test-linux.sh
 

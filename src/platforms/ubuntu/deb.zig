@@ -63,6 +63,9 @@ pub const Package = struct {
     maintainer: []const u8,
     /// One-line synopsis.
     description: []const u8,
+    /// Paragraphs that follow the synopsis in `dpkg -s` and `apt show`.
+    /// Lines are wrapped by the reader; blank lines separate paragraphs.
+    long_description: ?[]const u8 = null,
     section: []const u8 = "utils",
     priority: []const u8 = "optional",
     homepage: ?[]const u8 = null,
@@ -171,6 +174,7 @@ fn buildControlTar(gpa: Allocator, pkg: Package) Error![]u8 {
     try w.print("Priority: {s}\n", .{pkg.priority});
     if (pkg.homepage) |h| try w.print("Homepage: {s}\n", .{h});
     try w.print("Description: {s}\n", .{pkg.description});
+    if (pkg.long_description) |long| try writeLongDescription(w, long);
 
     var md5sums: Writer.Allocating = .init(gpa);
     defer md5sums.deinit();
@@ -205,6 +209,53 @@ fn buildControlTar(gpa: Allocator, pkg: Package) Error![]u8 {
     }
     try t.finish();
     return out.toOwnedSlice();
+}
+
+/// The extended description: each line indented by one space, and blank
+/// lines as ` .`, as deb-control(5) requires.
+fn writeLongDescription(w: *Writer, text: []const u8) Writer.Error!void {
+    var it = std.mem.splitScalar(u8, std.mem.trim(u8, text, "\n"), '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, " \t\r");
+        if (line.len == 0) {
+            try w.writeAll(" .\n");
+        } else {
+            try w.print(" {s}\n", .{line});
+        }
+    }
+}
+
+/// A Debian changelog (deb-changelog(5)) with one entry for `version`,
+/// dated `mtime`. Lintian expects one in every package.
+pub fn changelogFile(gpa: Allocator, name: []const u8, version: []const u8, maintainer: []const u8, mtime: u64) Allocator.Error![]u8 {
+    const es: std.time.epoch.EpochSeconds = .{ .secs = mtime };
+    const day = es.getEpochDay();
+    const yd = day.calculateYearDay();
+    const md = yd.calculateMonthDay();
+    const ds = es.getDaySeconds();
+    const weekdays = [_][]const u8{ "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed" };
+    const months = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    return std.fmt.allocPrint(gpa,
+        \\{s} ({s}) unstable; urgency=medium
+        \\
+        \\  * Release {s}.
+        \\
+        \\ -- {s}  {s}, {d:0>2} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} +0000
+        \\
+    , .{
+        name,                               version,
+        version,                            maintainer,
+        weekdays[day.day % 7],              md.day_index + 1,
+        months[@intFromEnum(md.month) - 1], yd.year,
+        ds.getHoursIntoDay(),               ds.getMinutesIntoHour(),
+        ds.getSecondsIntoMinute(),
+    });
+}
+
+/// Whether `path` is a manual page, which Debian policy wants compressed
+/// with gzip.
+pub fn isUncompressedManPage(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "/usr/share/man/") and !std.mem.endsWith(u8, path, ".gz");
 }
 
 fn dotPath(buf: []u8, abs: []const u8) error{NameTooLong}![]const u8 {
@@ -343,6 +394,30 @@ test "files in /etc are conffiles; scripts are executable" {
     defer out.deinit();
     pkg.scripts = .{ .prerm = "echo no shebang\n" };
     try testing.expectError(error.InvalidScript, write(testing.allocator, &out.writer, pkg));
+}
+
+test "long description" {
+    var pkg = sample;
+    pkg.long_description = "First paragraph,\nsecond line.\n\nSecond paragraph.\n";
+    const tar_bytes = try buildControlTar(testing.allocator, pkg);
+    defer testing.allocator.free(tar_bytes);
+    try testing.expect(std.mem.indexOf(u8, tar_bytes, "Description: Says hello\n First paragraph,\n second line.\n .\n Second paragraph.\n") != null);
+}
+
+test "changelogFile" {
+    const text = try changelogFile(testing.allocator, "hello", "1.2.0", "Jane Doe <jane@example.com>", 1760572800);
+    defer testing.allocator.free(text);
+    try testing.expectEqualStrings(
+        \\hello (1.2.0) unstable; urgency=medium
+        \\
+        \\  * Release 1.2.0.
+        \\
+        \\ -- Jane Doe <jane@example.com>  Thu, 16 Oct 2025 00:00:00 +0000
+        \\
+    , text);
+    const epoch0 = try changelogFile(testing.allocator, "a", "1", "M <m@x>", 315532800);
+    defer testing.allocator.free(epoch0);
+    try testing.expect(std.mem.indexOf(u8, epoch0, "Tue, 01 Jan 1980 00:00:00 +0000") != null);
 }
 
 test "dpkg-deb accepts the package (skipped when dpkg-deb is missing)" {

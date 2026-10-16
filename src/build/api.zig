@@ -162,6 +162,13 @@ pub const DebOptions = struct {
     /// `Depends` field. Binaries are statically linked (musl) so this is
     /// normally not needed.
     depends: ?[]const u8 = null,
+    /// The `Copyright` line of `/usr/share/doc/<package>/copyright`,
+    /// e.g. `"2026 Example Corp"`. Defaults to `windows.publisher`, else
+    /// the package name; Debian expects a year in it.
+    copyright: ?[]const u8 = null,
+    /// Text that follows the one-line description in `apt show`. Blank
+    /// lines separate paragraphs. Debian expects one.
+    long_description: ?[]const u8 = null,
     /// Files installed at absolute paths: a man page, shell completions, a
     /// systemd unit, a default configuration. Files in `/etc` are
     /// configuration files: dpkg keeps the administrator's changes on
