@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `windows.scope = .user` builds EXE and MSI installers that install for
+  the current user only, without administrator rights: into
+  `%LOCALAPPDATA%\Programs`, with the user's Start Menu, desktop, PATH
+  and `HKEY_CURRENT_USER`. The sample builds them with `-Dper-user`, and
+  the Windows end-to-end test installs and removes both.
+
 - The EXE and the MSI of a product refuse to install over each other,
   instead of sharing files under two Apps & Features entries: setup.exe
   checks for the MSI's upgrade code, and the MSI checks for the EXE's

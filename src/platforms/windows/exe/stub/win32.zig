@@ -27,6 +27,7 @@ pub const HWND = *opaque {};
 pub const HANDLE = *anyopaque;
 
 pub const HKEY_LOCAL_MACHINE: HKEY = @ptrFromInt(0x80000002);
+pub const HKEY_CURRENT_USER: HKEY = @ptrFromInt(0x80000001);
 pub const HWND_BROADCAST: HWND = @ptrFromInt(0xffff);
 
 pub const ERROR_SUCCESS: LSTATUS = 0;
@@ -632,6 +633,10 @@ pub const IShellItem = extern struct {
 
 pub extern "shell32" fn SHCreateItemFromParsingName(pszPath: [*:0]const WCHAR, pbc: ?*anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(.winapi) HRESULT;
 pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
+
+pub extern "shell32" fn SHGetKnownFolderPath(rfid: *const GUID, dwFlags: DWORD, hToken: ?HANDLE, ppszPath: *?[*:0]WCHAR) callconv(.winapi) HRESULT;
+pub const FOLDERID_Programs: GUID = .{ .data1 = 0xA77F5D77, .data2 = 0x2E2B, .data3 = 0x44C3, .data4 = .{ 0xA6, 0xA2, 0xAB, 0xA6, 0x01, 0x05, 0x4A, 0x51 } };
+pub const FOLDERID_Desktop: GUID = .{ .data1 = 0xB4BFCC3A, .data2 = 0xDB2C, .data3 = 0x424C, .data4 = .{ 0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41 } };
 
 // ---- List view (commctrl.h)
 

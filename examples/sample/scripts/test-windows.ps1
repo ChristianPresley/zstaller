@@ -7,7 +7,7 @@
 # running uninstall.exe directly, through the registered uninstall command
 # and through the setup program), that neither installs over the other,
 # install folders other users can change,
-# then upgrades and downgrades of both.
+# then upgrades and downgrades of both, and per-user installs.
 # Must run elevated, as GitHub-hosted Windows runners do.
 #
 # -InstallerDir tests already-built installers (for example the ones a
@@ -36,6 +36,12 @@ if ($InstallerDir) {
         if ($LASTEXITCODE -ne 0) { throw "zig build installer -Dversion=$v failed" }
         Copy-Item "zig-out/v$v/installers/*-windows-*" zig-out/installers/
     }
+    # The per-user variant (windows.scope = .user), in its own folder as
+    # its files have the same names.
+    zig build installer -Dper-user -p zig-out/per-user @signArg
+    if ($LASTEXITCODE -ne 0) { throw "zig build installer -Dper-user failed" }
+    New-Item -ItemType Directory -Force zig-out/installers/per-user | Out-Null
+    Copy-Item "zig-out/per-user/installers/*-windows-*" zig-out/installers/per-user/
     Set-Location zig-out/installers
 }
 
@@ -276,7 +282,47 @@ $msi101 = Get-Installer '1.0.1' 'msi'
 $msiRc = Get-Installer '1.0.1-rc.1' 'msi'
 if (-not ($exe101 -and $msi101 -and $msiRc)) {
     Write-Host 'Skipping upgrade tests: no 1.0.1 installers here'
-    Write-Host 'Windows end-to-end test passed'
+    # Per user: no administrator paths, keys or PATH entries are touched.
+if (Test-Path per-user) {
+    $puExe = (Resolve-Path "per-user/sample-1.0.0-windows-$arch-setup.exe").Path
+    $puMsi = (Resolve-Path "per-user/sample-1.0.0-windows-$arch.msi").Path
+    $puDir = Join-Path $env:LOCALAPPDATA 'Programs\Zstaller Sample'
+    $puKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample'
+    $puShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Zstaller Sample.lnk'
+    function Test-OnUserPath {
+        $path = [Environment]::GetEnvironmentVariable('Path', 'User')
+        return ($path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -contains $puDir
+    }
+    function Assert-PerUserInstalled {
+        $out = (& (Join-Path $puDir 'sample.exe')) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $out -notmatch 'Hello from the zstaller sample') { throw "per-user sample.exe printed: $out" }
+        if (-not (Test-Path $puShortcut)) { throw "per-user Start Menu shortcut $puShortcut was not created" }
+        if (-not (Test-OnUserPath)) { throw 'per-user install did not add its folder to the user PATH' }
+        if ((Test-OnPath) -or (Test-Path $dir) -or (Test-Path $shortcut)) { throw 'per-user install touched the per-machine locations' }
+    }
+    function Assert-PerUserRemoved {
+        for ($i = 0; $i -lt 20 -and (Test-Path $puDir); $i++) { Start-Sleep -Milliseconds 500 }
+        if (Test-Path $puDir) { throw "$puDir still exists: $(Get-ChildItem $puDir -Force | Out-String)" }
+        if (Test-Path $puShortcut) { throw 'per-user Start Menu shortcut was not removed' }
+        if (Test-OnUserPath) { throw 'per-user PATH entry was not removed' }
+    }
+
+    Write-Host '== Per-user EXE: silent install and uninstall'
+    Invoke-Checked $puExe '/S'
+    Assert-PerUserInstalled
+    if (-not (Test-Path $puKey)) { throw 'per-user EXE is not registered under HKEY_CURRENT_USER' }
+    Invoke-Checked (Join-Path $puDir 'uninstall.exe') '/S'
+    Assert-PerUserRemoved
+    if (Test-Path $puKey) { throw 'per-user uninstall entry was not removed' }
+
+    Write-Host '== Per-user MSI: silent install and uninstall'
+    Invoke-Checked msiexec.exe "/i `"$puMsi`" /qn /l*v `"$PWD\msi-per-user.log`""
+    Assert-PerUserInstalled
+    Invoke-Checked msiexec.exe "/x `"$puMsi`" /qn /l*v `"$PWD\msi-per-user-uninstall.log`""
+    Assert-PerUserRemoved
+}
+
+Write-Host 'Windows end-to-end test passed'
     exit 0
 }
 

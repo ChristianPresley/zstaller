@@ -62,6 +62,21 @@ pub const InstallRoot = enum {
     system_drive,
 };
 
+/// Who the Windows installers install for.
+pub const Scope = enum {
+    /// Every user of the machine. Installing needs administrator rights
+    /// (a UAC prompt); files go in `install_root`, shortcuts and the PATH
+    /// entry are for all users, and the registration is in
+    /// HKEY_LOCAL_MACHINE.
+    machine,
+    /// Only the user who installs, without administrator rights: files go
+    /// in `%LOCALAPPDATA%\Programs\<install_dir_name>`, with that user's
+    /// Start Menu, desktop, PATH and HKEY_CURRENT_USER. `install_root`
+    /// does not apply. Suits developer tools and apps users install
+    /// themselves.
+    user,
+};
+
 /// Whether the installers create a desktop shortcut.
 pub const DesktopShortcut = enum {
     never,
@@ -114,6 +129,9 @@ pub const WindowsOptions = struct {
     install_dir_name: ?[]const u8 = null,
     /// Folder the default install directory is created in.
     install_root: InstallRoot = .program_files,
+    /// Install for every user (administrator rights needed) or only for
+    /// the user who installs. See `Scope`.
+    scope: Scope = .machine,
     /// Let the user choose another install directory in the EXE wizard.
     /// When false the wizard shows the directory but cannot change it
     /// (`/D=<dir>` still works for scripted installs).
