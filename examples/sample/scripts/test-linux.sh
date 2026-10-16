@@ -96,8 +96,24 @@ echo "$reply" | grep -q '"serverInfo":{"name":"sample"'
 echo "$reply" | grep -q '"name":"sha256"'
 rm -rf "$bundle_dir"
 
+echo "== MCP: a user registers the server; removing the package unregisters it"
+# A throwaway user, so no real profile is touched.
+mcp_user=zstaller-mcp-test
+sudo useradd --create-home "$mcp_user"
+mcp_home="$(getent passwd "$mcp_user" | cut -d: -f6)"
+sudo -u "$mcp_user" mkdir "$mcp_home/.claude"
+printf '{\n  "numStartups": 1\n}\n' | sudo -u "$mcp_user" tee "$mcp_home/.claude.json" >/dev/null
+sudo -u "$mcp_user" chmod 600 "$mcp_home/.claude.json"
+sudo -u "$mcp_user" env HOME="$mcp_home" /usr/lib/sample/zstaller-mcp register
+sudo grep -q '"zstaller-sample": {"type":"stdio","command":"/usr/bin/sample-tool","args":\["mcp"\]}' "$mcp_home/.claude.json"
+sudo -u "$mcp_user" env HOME="$mcp_home" /usr/lib/sample/zstaller-mcp status | grep -q 'Claude Code: registered'
+
 echo "== purge"
 sudo dpkg --purge sample
 if command -v sample >/dev/null || command -v sample-tool >/dev/null; then echo "sample still installed"; exit 1; fi
 if [ -e /etc/sample ] || [ -e /var/lib/sample ]; then echo "purge left /etc/sample or /var/lib/sample"; exit 1; fi
+if sudo grep -q zstaller-sample "$mcp_home/.claude.json"; then echo "removing the package left the MCP registration"; exit 1; fi
+sudo grep -q '"numStartups": 1' "$mcp_home/.claude.json"
+test "$(sudo stat -c '%U %a' "$mcp_home/.claude.json")" = "$mcp_user 600"
+sudo userdel --remove "$mcp_user" 2>/dev/null || true
 echo "Linux end-to-end test passed"

@@ -151,9 +151,23 @@ pub const Product = struct {
     /// the old version), before its files are removed. Its exit code is
     /// ignored.
     before_uninstall: ?Hook = null,
+    /// Registers the product's MCP server with the AI tools of the user
+    /// installing (see `Mcp`).
+    mcp: ?Mcp = null,
     files: []const File,
     /// Seconds since the Unix epoch for the summary timestamps.
     timestamp: u64 = 0,
+};
+
+/// zstaller-mcp (src/mcp/helper.zig), one of `files`. Installing runs
+/// `<helper> register` as the user who installs (an impersonated
+/// deferred action), unless REGISTERMCP is set to something other than 1
+/// where that is allowed. Uninstalling runs `<helper> unregister
+/// --all-users` (per user: `unregister`) before the files go.
+pub const Mcp = struct {
+    helper: []const u8,
+    /// Whether REGISTERMCP=0 turns registering off.
+    optional: bool = true,
 };
 
 pub const Error = db_mod.Error || cab.Error || error{ InvalidUpgradeCode, InvalidPath, InvalidShortcut, InvalidHook, InvalidVersion, NoFiles, TooManyFiles };
@@ -259,6 +273,11 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         h.update(&.{@intFromBool(p.per_user)});
         if (p.exe_registry_key) |key| h.update(key);
         h.update(&.{0});
+        if (p.mcp) |m| {
+            h.update(m.helper);
+            h.update(&.{@intFromBool(m.optional)});
+        }
+        h.update(&.{0});
         for ([_]?Hook{ p.after_install, p.before_uninstall }) |hook| {
             if (hook) |x| {
                 h.update(x.target);
@@ -292,9 +311,10 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         .{ "ARPNOMODIFY", "1" },
         .{ "ARPNOREPAIR", "1" },
         .{ "ARPCOMMENTS", p.description },
-        .{ "SecureCustomProperties", "ADDTOPATH;DESKTOPSHORTCUT;NEWERVERSIONFOUND;OLDERVERSIONFOUND" },
+        .{ "SecureCustomProperties", "ADDTOPATH;DESKTOPSHORTCUT;NEWERVERSIONFOUND;OLDERVERSIONFOUND;REGISTERMCP" },
     };
     for (props) |kv| try db.addRow(property, &.{ .{ .str = kv[0] }, .{ .str = kv[1] } });
+    if (p.mcp != null) try db.addRow(property, &.{ .{ .str = "REGISTERMCP" }, .{ .str = "1" } });
     // Without ALLUSERS, Windows Installer installs for the current user.
     if (!p.per_user) try db.addRow(property, &.{ .{ .str = "ALLUSERS" }, .{ .str = "1" } });
     // Registry roots: HKEY_CURRENT_USER or HKEY_LOCAL_MACHINE.
@@ -700,7 +720,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     // ---- Install and uninstall hooks: type 18 (an installed .exe) with
     // the deferred and no-impersonate flags, so they run elevated as
     // LocalSystem inside the install script, where a failure rolls back.
-    if (p.after_install != null or p.before_uninstall != null) {
+    if (p.after_install != null or p.before_uninstall != null or p.mcp != null) {
         const custom = try db.addTable("CustomAction", &.{
             .{ .name = "Action", .type = T.str(72) | T.key },
             .{ .name = "Type", .type = T.int2 },
@@ -727,6 +747,19 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
                 if (args.len > 0) Value{ .str = args } else .null,
             });
             try db.addRow(execute, &.{ .{ .str = hk[1] }, .{ .str = hk[3] }, .{ .int = hk[4] } });
+        }
+        // MCP registration: as the user who installs (impersonated), since
+        // it changes files in their profile. Removal runs elevated, for
+        // every profile, as the uninstall may be someone else's. Neither
+        // may fail the install (Continue, 0x40).
+        if (p.mcp) |m| {
+            const helper = installed.get(m.helper) orelse return error.InvalidHook;
+            const register_type: i32 = (18 | 0x400 | 0x40);
+            const unregister_type: i32 = if (p.per_user) register_type else register_type | 0x800;
+            try db.addRow(custom, &.{ .{ .str = "ZstallerRegisterMcp" }, .{ .int = register_type }, .{ .str = helper.file }, .{ .str = "register" } });
+            try db.addRow(custom, &.{ .{ .str = "ZstallerUnregisterMcp" }, .{ .int = unregister_type }, .{ .str = helper.file }, .{ .str = if (p.per_user) "unregister" else "unregister --all-users" } });
+            try db.addRow(execute, &.{ .{ .str = "ZstallerRegisterMcp" }, .{ .str = if (m.optional) "NOT REMOVE~=\"ALL\" AND REGISTERMCP=\"1\"" else "NOT REMOVE~=\"ALL\"" }, .{ .int = 6510 } });
+            try db.addRow(execute, &.{ .{ .str = "ZstallerUnregisterMcp" }, .{ .str = "REMOVE~=\"ALL\" AND NOT UPGRADINGPRODUCTCODE" }, .{ .int = 3110 } });
         }
     }
     const ui = try db.addTable("InstallUISequence", &seq_cols);

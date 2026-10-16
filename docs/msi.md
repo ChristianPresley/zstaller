@@ -106,6 +106,15 @@ cabinet are stored as separate streams.
   registry value, so that `.optional` can condition it on the public
   `DESKTOPSHORTCUT` property (default `0`).
 - An Apps & Features icon (`ARPPRODUCTICON`) is added when `icon` is set.
+- **MCP registration.** With `mcp.register` set, `zstaller-mcp.exe` is
+  installed with the product, and two type-18 custom actions run it:
+  `ZstallerRegisterMcp` (`register`, 1106: deferred, impersonated, so it
+  runs as the user who installs and edits their profile; Continue, so a
+  failure never fails the install) at 6510, conditioned on
+  `REGISTERMCP="1"` for `.optional`; and `ZstallerUnregisterMcp`
+  (`unregister --all-users`, 3154: also no-impersonate, as it edits every
+  profile) at 3110, on `REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE`. Per
+  user, removal runs as the user with `unregister`.
 
 ## Verification
 

@@ -212,11 +212,40 @@ pub const McpOptions = struct {
     bundle: bool = true,
     /// Square PNG icon for the bundle, ideally 512x512.
     icon: ?LazyPath = null,
+    /// Register the server with the AI tools of the user who installs.
+    /// The installers add a small program, `zstaller-mcp`, next to the
+    /// application: on Windows Setup runs it as the user who installs and
+    /// the uninstaller runs it to remove the entries again (for every
+    /// user); on Ubuntu users run `/usr/lib/<package>/zstaller-mcp
+    /// register` themselves and removing the package unregisters.
+    /// `.optional`: on by default, with a checkbox in Setup, `/NOMCP` for
+    /// silent installs and `REGISTERMCP=0` for the MSI.
+    register: McpRegister = .optional,
+    /// Which AI tools to register with, for those the user has installed.
+    clients: McpClients = .{},
 };
 
 pub const McpEnv = struct {
     name: []const u8,
     value: []const u8,
+};
+
+pub const McpRegister = enum { never, optional, always };
+
+/// AI tools that keep their MCP servers in a per-user file.
+pub const McpClients = struct {
+    /// `~/.claude.json`.
+    claude_code: bool = true,
+    /// `mcp.json` in VS Code's user settings folder.
+    vscode: bool = true,
+    vscode_insiders: bool = false,
+    /// `claude_desktop_config.json`. The `.mcpb` bundle is the usual way
+    /// to add a server to Claude Desktop.
+    claude_desktop: bool = false,
+    /// `~/.cursor/mcp.json`.
+    cursor: bool = false,
+    /// `~/.codeium/windsurf/mcp_config.json`.
+    windsurf: bool = false,
 };
 
 pub const DebOptions = struct {
@@ -465,6 +494,9 @@ pub const Context = struct {
     /// renamed to .ico would otherwise go into the MSI unnoticed and fail
     /// the EXE build with an error about a generated resource file.
     icon: ?LazyPath,
+    /// `zstaller-mcp` for this target, when `options.mcp.register` asks
+    /// for it (see `mcp.addHelper`).
+    mcp_helper: ?LazyPath = null,
 
     /// Records a configuration error. The `installer` step fails with
     /// `msg` when run; other steps are unaffected.
@@ -629,7 +661,7 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
                 .shortcut = program.shortcut,
             };
         }
-        const ctx: Context = .{
+        var ctx: Context = .{
             .b = b,
             .zb = zb,
             .pack = pack,
@@ -646,6 +678,9 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             .icon = icon,
         };
         if (!programsFit(&ctx)) continue;
+        if (opts.mcp) |m| if (m.register != .never) {
+            ctx.mcp_helper = mcp.addHelper(&ctx) orelse continue;
+        };
         const mcpb: []const Format = if (opts.mcp) |m| (if (m.bundle) &.{.mcpb} else &.{}) else &.{};
         const formats = std.mem.concat(b.allocator, Format, &.{ t.formats(), mcpb }) catch @panic("OOM");
         for (formats) |format| {
@@ -680,7 +715,7 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
 
 /// The file to package for `binary`: on Windows normalized (see
 /// `normalizePe`) and signed with `options.sign`.
-fn packagedBinary(b: *Build, options: *const Options, pack: *Build.Step.Compile, t: Target, resolved: Build.ResolvedTarget, binary: *Build.Step.Compile) LazyPath {
+pub fn packagedBinary(b: *Build, options: *const Options, pack: *Build.Step.Compile, t: Target, resolved: Build.ResolvedTarget, binary: *Build.Step.Compile) LazyPath {
     if (needsSymbols(resolved.result)) binary.root_module.strip = false;
     if (resolved.result.os.tag != .windows) return binary.getEmittedBin();
     const normalized = normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename);
@@ -695,7 +730,9 @@ fn programsFit(ctx: *const Context) bool {
     const windows = ctx.resolved_target.result.os.tag == .windows;
     var ok = true;
     for (ctx.programs, 0..) |p, i| {
-        if (std.ascii.eqlIgnoreCase(p.name, ctx.binary.out_filename) or (windows and std.ascii.eqlIgnoreCase(p.name, "uninstall.exe"))) {
+        if (std.ascii.eqlIgnoreCase(p.name, ctx.binary.out_filename) or (windows and std.ascii.eqlIgnoreCase(p.name, "uninstall.exe")) or
+            isHelperName(ctx, p.name))
+        {
             ctx.fail("programs[{d}] is named '{s}', like a file the installer writes itself; give it another name", .{ i, p.name });
             ok = false;
         }
@@ -725,7 +762,7 @@ fn programsFit(ctx: *const Context) bool {
     }
     for (opts.extra_files, 0..) |f, i| {
         var clash = std.ascii.eqlIgnoreCase(f.dest, ctx.binary.out_filename) or
-            (windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe"));
+            (windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe")) or (windows and isHelperName(ctx, f.dest));
         for (ctx.programs) |p| clash = clash or (windows and std.ascii.eqlIgnoreCase(f.dest, p.name));
         if (clash) {
             ctx.fail("extra_files[{d}].dest '{s}' is the name of a file the installer writes itself", .{ i, f.dest });
@@ -733,6 +770,13 @@ fn programsFit(ctx: *const Context) bool {
         }
     }
     return ok;
+}
+
+/// Whether `name` is the file name of `zstaller-mcp`, when it is installed.
+fn isHelperName(ctx: *const Context, name: []const u8) bool {
+    const m = ctx.options.mcp orelse return false;
+    if (m.register == .never) return false;
+    return std.ascii.eqlIgnoreCase(name, mcp.helperFileName(ctx));
 }
 
 /// `file` signed by `options.sign`, or `file` itself without one.

@@ -38,6 +38,8 @@ pub const wizard_assets = @import("platforms/windows/exe/wizard_assets.zig");
 pub const wizard_art = @import("platforms/windows/exe/stub/art.zig");
 pub const exe_acl = @import("platforms/windows/exe/stub/acl.zig");
 pub const pe = @import("platforms/windows/pe.zig");
+/// Registering MCP servers with AI tools (zstaller-mcp).
+pub const mcp_registrar = @import("mcp/registrar.zig");
 pub const msi = struct {
     pub const cfb = @import("platforms/windows/msi/cfb.zig");
     pub const cab = @import("platforms/windows/msi/cab.zig");

@@ -22,6 +22,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const PathMode = enum { never, optional, always };
+/// Whether Setup registers the application's MCP server with the user's
+/// AI tools (`Options.mcp.register`).
+pub const McpMode = enum { never, optional, always };
 
 /// Whether the installer creates a desktop shortcut: never, when the user
 /// ticks the box (unticked by default; `/DESKTOP` on the command line), or
@@ -56,6 +59,8 @@ pub const Command = struct {
     add_to_path: ?bool = null,
     /// Explicit desktop shortcut choice (`/DESKTOP` or `/NODESKTOP`).
     desktop_shortcut: ?bool = null,
+    /// Explicit MCP registration choice (`/MCP` or `/NOMCP`).
+    register_mcp: ?bool = null,
     /// Internal (`/_cleanup=<dir>`): run as the temporary helper that
     /// removes the uninstaller and the install directory once the
     /// uninstaller has exited.
@@ -92,6 +97,8 @@ pub const ParseError = error{UnknownOption};
 ///   /NOPATH      do not add it
 ///   /DESKTOP     create a desktop shortcut
 ///   /NODESKTOP   do not create one
+///   /MCP         register the MCP server with the user's AI tools
+///   /NOMCP       do not register it
 ///   /uninstall   remove the installed application (the default when the
 ///                program is run as uninstall.exe)
 ///   /?           show help
@@ -115,6 +122,10 @@ pub fn parse(args: []const []const u8) ParseError!Command {
             cmd.desktop_shortcut = true;
         } else if (eqlIgnoreCase(a, "nodesktop")) {
             cmd.desktop_shortcut = false;
+        } else if (eqlIgnoreCase(a, "mcp")) {
+            cmd.register_mcp = true;
+        } else if (eqlIgnoreCase(a, "nomcp")) {
+            cmd.register_mcp = false;
         } else if (eqlIgnoreCase(a, "uninstall") or eqlIgnoreCase(a, "u")) {
             cmd.action = .uninstall;
         } else if (eqlIgnoreCase(a, "?") or eqlIgnoreCase(a, "h") or eqlIgnoreCase(a, "help")) {
@@ -131,7 +142,23 @@ pub fn parse(args: []const []const u8) ParseError!Command {
     return cmd;
 }
 
-pub const help_text =
+/// The help text, with the MCP options when Setup has a choice to offer.
+pub fn helpText(comptime mcp: bool) []const u8 {
+    return if (mcp) help_options ++ mcp_help_options ++ help_exit_codes else help_options ++ help_exit_codes;
+}
+
+const mcp_help_options =
+    \\  /MCP        Register the MCP server with your AI tools
+    \\  /NOMCP      Do not register the MCP server
+    \\
+;
+
+const help_exit_codes =
+    \\
+    \\Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments
+;
+
+const help_options =
     \\Options:
     \\  /S          Silent install or uninstall (no dialogs)
     \\  /D=<dir>    Install directory
@@ -141,7 +168,6 @@ pub const help_text =
     \\  /NODESKTOP  Do not create a desktop shortcut
     \\  /uninstall  Remove the application (the default for uninstall.exe)
     \\
-    \\Exit codes: 0 success, 1 error, 2 cancelled, 3 bad arguments
 ;
 
 fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {

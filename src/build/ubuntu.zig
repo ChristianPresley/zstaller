@@ -19,6 +19,7 @@
 const std = @import("std");
 const api = @import("api.zig");
 const naming = @import("../naming.zig");
+const mcp = @import("mcp.zig");
 const LazyPath = std.Build.LazyPath;
 
 pub fn addPackage(ctx: *const api.Context, format: api.Format) ?LazyPath {
@@ -76,6 +77,14 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
         run.addFileArg(f.source);
         run.addArgs(&.{ b.fmt("/usr/share/{s}/{s}", .{ pkg_name, f.dest }), "644" });
     }
+    if (ctx.mcp_helper) |helper| {
+        const path = mcp.debHelperPath(b, pkg_name);
+        run.addArg("--file");
+        run.addFileArg(helper);
+        run.addArgs(&.{ path, "755" });
+        // Removing the package removes its registrations.
+        run.addArgs(&.{ "--mcp-helper", path });
+    }
     if (o.deb.long_description) |text| {
         const wf = b.addWriteFiles();
         run.addArg("--long-description");
@@ -105,6 +114,7 @@ fn addLayout(ctx: *const api.Context, run: *std.Build.Step.Run, pkg_name: []cons
     put(&taken, b.allocator, b.fmt("/usr/share/lintian/overrides/{s}", .{pkg_name}), "the lintian overrides");
     const desktop_path = b.fmt("/usr/share/applications/{s}.desktop", .{pkg_name});
     if (o.deb.desktop_entry != null) put(&taken, b.allocator, desktop_path, "the desktop entry");
+    if (ctx.mcp_helper != null) put(&taken, b.allocator, mcp.debHelperPath(b, pkg_name), "zstaller-mcp");
 
     var ok = true;
     for (o.deb.files, 0..) |f, i| {

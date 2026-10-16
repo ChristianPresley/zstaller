@@ -254,6 +254,37 @@ pub fn changelogFile(gpa: Allocator, name: []const u8, version: []const u8, main
 
 /// Whether `path` is a manual page, which Debian policy wants compressed
 /// with gzip.
+/// The prerm script with lines that remove the package's MCP server
+/// registrations (`helper unregister --all-users`, see src/mcp/helper.zig)
+/// when the package is removed. They go right after the `#!` line of the
+/// author's own `prerm`, or make up the whole script when there is none.
+pub fn withPrermSnippet(gpa: Allocator, prerm: ?[]const u8, helper: []const u8) Allocator.Error![]u8 {
+    const snippet = try std.fmt.allocPrint(gpa,
+        \\# Added by zstaller: remove this package's MCP server from the
+        \\# users' AI tools (only entries that run this package's program).
+        \\if [ "$1" = remove ] && [ -x {s} ]; then
+        \\    {s} unregister --all-users >/dev/null 2>&1 || true
+        \\fi
+        \\
+    , .{ helper, helper });
+    defer gpa.free(snippet);
+    const script = prerm orelse return std.mem.concat(gpa, u8, &.{ "#!/bin/sh\nset -e\n", snippet });
+    const nl = (std.mem.indexOfScalar(u8, script, '\n') orelse return std.mem.concat(gpa, u8, &.{ script, "\n", snippet })) + 1;
+    return std.mem.concat(gpa, u8, &.{ script[0..nl], snippet, script[nl..] });
+}
+
+test withPrermSnippet {
+    const gpa = std.testing.allocator;
+    const alone = try withPrermSnippet(gpa, null, "/usr/lib/app/zstaller-mcp");
+    defer gpa.free(alone);
+    try std.testing.expect(std.mem.startsWith(u8, alone, "#!/bin/sh\nset -e\n# Added by zstaller"));
+    try std.testing.expect(std.mem.indexOf(u8, alone, "    /usr/lib/app/zstaller-mcp unregister --all-users") != null);
+    const theirs = try withPrermSnippet(gpa, "#!/bin/bash\necho bye\n", "/x");
+    defer gpa.free(theirs);
+    try std.testing.expect(std.mem.startsWith(u8, theirs, "#!/bin/bash\n# Added by zstaller"));
+    try std.testing.expect(std.mem.endsWith(u8, theirs, "fi\necho bye\n"));
+}
+
 pub fn isUncompressedManPage(path: []const u8) bool {
     return std.mem.startsWith(u8, path, "/usr/share/man/") and !std.mem.endsWith(u8, path, ".gz");
 }
