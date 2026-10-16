@@ -8,6 +8,7 @@ installed.
 zig build run        # build and run natively
 zig build installer  # build every installer into zig-out/installers/
 zig build installer -Dversion=1.0.1   # the same, as another version
+zig build installer -Dsign=<thumbprint>  # Windows: signed with a certificate from your store (scripts/sign.ps1)
 ```
 
 The EXE installer shows a setup wizard with the sample's own artwork

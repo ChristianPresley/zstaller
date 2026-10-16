@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Options.sign` signs the Windows application before it is packed, then
+  the finished setup program and MSI before their checksums are written.
+  The sample builds signed with `-Dsign=<thumbprint>`, and Windows CI
+  checks the signatures of the installers, the installed application and
+  `uninstall.exe`.
+
 - The EXE installer has a setup wizard: Welcome, License (optional),
   Install location with a folder picker and disk space, Additional tasks,
   a progress page and a Finished page that can launch the application.

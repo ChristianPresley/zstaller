@@ -30,11 +30,15 @@ pub fn build(b: *std.Build) void {
     // and .deb installers to zig-out/installers/. `-Dversion=1.0.1` builds
     // them as another version, which the Windows test uses for upgrades.
     const version = b.option([]const u8, "version", "Build the installers as this version instead of the one in build.zig.zon");
+    // `-Dsign=<certificate thumbprint>` signs the Windows files with that
+    // certificate from the Windows certificate store; see signFile.
+    sign_thumbprint = b.option([]const u8, "sign", "Sign the Windows files with this certificate (SHA-1 thumbprint, Windows only)");
     const installers = zstaller.addInstallers(b, .{
         .executable = createExe,
         // Every target is built by default; listed here for clarity.
         .targets = &.{ .windows_x86_64, .windows_aarch64, .ubuntu_x86_64, .ubuntu_aarch64 },
         .metadata = .{ .version = version },
+        .sign = if (sign_thumbprint != null) signFile else null,
         .icon = b.path("assets/sample.ico"),
         .extra_files = &.{
             .{ .source = b.path("README.md"), .dest = "README.md" },
@@ -71,6 +75,20 @@ pub fn build(b: *std.Build) void {
         },
     });
     b.step("installer", "Build installers for every target").dependOn(installers.step);
+}
+
+var sign_thumbprint: ?[]const u8 = null;
+
+/// zstaller calls this for the application's .exe, the setup program and
+/// the MSI of each Windows target. It returns a signed copy made by
+/// scripts/sign.ps1 with signtool. On Linux, osslsigncode does the same:
+/// `osslsigncode sign -pkcs12 cert.pfx -in <file> -out <signed>`.
+fn signFile(b: *std.Build, request: zstaller.SignRequest) std.Build.LazyPath {
+    const run = b.addSystemCommand(&.{ "pwsh", "-NoProfile", "-File" });
+    run.addFileArg(b.path("scripts/sign.ps1"));
+    run.addArg(sign_thumbprint.?);
+    run.addFileArg(request.file);
+    return run.addOutputFileArg(request.basename);
 }
 
 /// zstaller calls this once per target to cross-compile the application.

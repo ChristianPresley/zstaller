@@ -187,6 +187,7 @@ option into `zig-out/docs`.
 | `metadata` | none | Overrides for `name`, `version`, `description`, `license`, e.g. a version from `git describe`. |
 | `icon` | none | `.ico` file for the EXE, its wizard, Apps & Features and the MSI. Include 16, 32, 48 and 256 pixel images; ImageMagick makes one with `magick app.png -define icon:auto-resize=256,48,32,16 app.ico`. |
 | `extra_files` | none | Files installed next to the binary: `source` and `dest`, a relative path that may use `/` for subfolders. |
+| `sign` | none | Signs the Windows application, setup program and MSI. See [Code signing](#code-signing). |
 | `install_subdir` | `"installers"` | Output directory under `zig-out/`. |
 | `source_date_epoch` | `SOURCE_DATE_EPOCH`, else 1980 | Timestamp written into packages. See [Reproducible builds](#reproducible-builds). |
 
@@ -469,7 +470,7 @@ in Program Files, a new folder, or an empty one.
 
 **SmartScreen says "Windows protected your PC", or UAC shows "Unknown
 publisher"**: the installers are not code-signed; see
-[Limitations](#limitations).
+[Code signing](#code-signing).
 
 **"This app can't run on your PC"**: the installer is for the other
 Windows architecture. Use the `windows-x86_64` files on Intel and AMD PCs,
@@ -508,6 +509,49 @@ release workflow, which downloads them, checks their checksums, installs,
 runs and uninstalls them on every platform, and publishes the draft only if
 all of that passes. It needs the [GitHub CLI](https://cli.github.com/),
 signed in.
+
+## Code signing
+
+Unsigned installers make SmartScreen say "Windows protected your PC" and
+UAC show "Unknown publisher". Set `sign` to a function that returns a
+signed copy of a file, and zstaller calls it for each Windows target's
+application `.exe` (before it is packed, so the installed program is
+signed), then for the finished setup program and MSI (before their
+`.sha256` files are written). `uninstall.exe` is a copy of the setup
+program, so it is signed too. `.deb` packages are not passed to it: apt
+checks the signature of the repository, not of the package.
+
+With `osslsigncode`, which works on Linux, macOS and Windows:
+
+```zig
+const installers = zstaller.addInstallers(b, .{
+    .executable = createExe,
+    .sign = sign,
+    // ...
+});
+
+fn sign(b: *std.Build, request: zstaller.SignRequest) std.Build.LazyPath {
+    const run = b.addSystemCommand(&.{ "osslsigncode", "sign", "-h", "sha256" });
+    run.addArg("-pkcs12");
+    run.addFileArg(b.path("codesign.pfx"));
+    run.addArg("-readpass");
+    run.addFileArg(b.path("codesign.pass"));
+    run.addArgs(&.{ "-t", "http://timestamp.digicert.com", "-in" });
+    run.addFileArg(request.file);
+    run.addArg("-out");
+    return run.addOutputFileArg(request.basename);
+}
+```
+
+`request.kind` says what the file is (`.windows_binary`,
+`.windows_setup` or `.windows_msi`) and `request.target` which target it
+belongs to. `signtool` signs in place, so copy the file first; the sample
+does that in [`scripts/sign.ps1`](examples/sample/scripts/sign.ps1) and
+builds signed with `zig build installer -Dsign=<thumbprint>`, which CI
+runs with a throwaway certificate. Keep certificates and passwords out of
+the repository, for example in environment variables or files the release
+machine provides. Signatures carry their own timestamp, so signed
+installers are not reproducible; compare unsigned builds.
 
 ## Reproducible builds
 
@@ -558,9 +602,6 @@ Each platform sits behind one interface,
 
 ## Limitations
 
-- Installers are not code-signed, so Windows shows SmartScreen and
-  "Unknown publisher" warnings. Signing the files in `Installers.outputs`
-  after the build makes their `.sha256` files stale.
 - The MSI shows Windows Installer's basic progress UI, not the EXE's
   wizard.
 - Each package holds one executable plus `extra_files`, which are not
