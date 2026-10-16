@@ -48,6 +48,7 @@ pub const archive = struct {
     pub const tar = @import("archive/tar.zig");
     pub const ar = @import("archive/ar.zig");
     pub const deflate = @import("archive/deflate.zig");
+    pub const zip = @import("archive/zip.zig");
 };
 
 /// The zstaller release this source tree corresponds to, taken from

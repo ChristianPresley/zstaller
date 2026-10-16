@@ -23,9 +23,13 @@
 //! hooks (`after_install` and `before_uninstall` in build.zig):
 //! `--register` writes machine-wide state to
 //! `%ProgramData%\Zstaller Sample`, and `--unregister` removes it.
+//!
+//! `sample-tool mcp` runs it as an MCP server (src/mcp.zig), which
+//! zstaller packages through `.mcp` in build.zig.
 
 const std = @import("std");
 const options = @import("options");
+const mcp = @import("mcp.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -35,9 +39,10 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) {
-        try w.print("sample-tool {s}\nUsage: sample-tool <file>...  prints the SHA-256 of each file\n", .{options.version});
+        try w.print("sample-tool {s}\nUsage: sample-tool <file>...  prints the SHA-256 of each file\n       sample-tool mcp        runs as an MCP server on stdin and stdout\n", .{options.version});
         return w.flush();
     }
+    if (std.mem.eql(u8, args[1], "mcp")) return mcp.serve(io, init.gpa, options.version);
     if (std.mem.eql(u8, args[1], "--register") or std.mem.eql(u8, args[1], "--unregister")) {
         const program_data = init.environ_map.get("ProgramData") orelse return error.NoProgramData;
         const dir = try std.fs.path.join(init.gpa, &.{ program_data, "Zstaller Sample" });

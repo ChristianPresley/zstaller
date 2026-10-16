@@ -56,6 +56,8 @@ pub fn main(init: std.process.Init) !void {
         cmdExeAssemble(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "check-icon")) {
         cmdCheckIcon(ctx, rest);
+    } else if (std.mem.eql(u8, cmd, "mcpb")) {
+        try cmdMcpb(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "pe-normalize")) {
         try cmdPeNormalize(ctx, rest);
     } else {
@@ -80,7 +82,7 @@ const Ctx = struct {
 };
 
 fn usage() noreturn {
-    fail("usage: zstaller-pack <checksum|deb|payload|wizard|msi|exe-assemble|check-icon|pe-normalize> [options]", .{});
+    fail("usage: zstaller-pack <checksum|deb|payload|wizard|msi|mcpb|exe-assemble|check-icon|pe-normalize> [options]", .{});
 }
 
 fn fail(comptime fmt: []const u8, args: anytype) noreturn {
@@ -357,6 +359,31 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         error.InvalidPath => fail("an install path or install_dir_name contains characters Windows does not allow", .{}),
         else => |e| fail("cannot build MSI: {t}", .{e}),
     };
+    ctx.writeFile(o.required("out"), out.written());
+}
+
+/// `mcpb --out <file> --mtime <secs> --manifest <json> [--icon <png>]
+/// [--file <source> <path in bundle> <octal mode>]...`: an MCP bundle, a zip
+/// with `manifest.json` (and `icon.png`) first.
+fn cmdMcpb(ctx: Ctx, args: []const []const u8) !void {
+    const zip = zstaller.archive.zip;
+    const o = Options.parse(ctx.arena, args, 3, &.{ "out", "mtime", "manifest", "icon" });
+    var entries: std.ArrayList(zip.Entry) = .empty;
+    entries.append(ctx.arena, .{ .path = "manifest.json", .data = ctx.readFile(o.required("manifest")) }) catch oom();
+    if (o.get("icon")) |path| {
+        const png = ctx.readFile(path);
+        if (!std.mem.startsWith(u8, png, "\x89PNG")) fail("mcp.icon: '{s}' is not a PNG file", .{path});
+        const img = zstaller.image.decode(ctx.arena, png) catch fail("mcp.icon: '{s}' is not a PNG this tool can read; save it as a standard 24- or 32-bit PNG", .{path});
+        if (img.width != img.height) fail("mcp.icon: '{s}' is {d}x{d}; use a square PNG, ideally 512x512", .{ path, img.width, img.height });
+        entries.append(ctx.arena, .{ .path = "icon.png", .data = png }) catch oom();
+    }
+    for (o.files.items) |f| {
+        const mode = std.fmt.parseInt(u32, f[2], 8) catch fail("invalid mode '{s}'", .{f[2]});
+        entries.append(ctx.arena, .{ .path = f[1], .data = ctx.readFile(f[0]), .mode = mode }) catch oom();
+    }
+    var out: Io.Writer.Allocating = .init(ctx.gpa);
+    defer out.deinit();
+    zip.write(ctx.gpa, &out.writer, entries.items, o.mtime()) catch |err| fail("cannot build the MCP bundle: {t}", .{err});
     ctx.writeFile(o.required("out"), out.written());
 }
 

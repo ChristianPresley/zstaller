@@ -38,12 +38,16 @@ pub const Format = enum {
     deb,
     exe,
     msi,
+    /// An MCP bundle for Claude Desktop, built for every target when
+    /// `Options.mcp` is set.
+    mcpb,
 
     pub fn extension(f: Format) []const u8 {
         return switch (f) {
             .deb => ".deb",
             .exe => ".exe",
             .msi => ".msi",
+            .mcpb => ".mcpb",
         };
     }
 };
