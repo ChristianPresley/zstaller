@@ -111,6 +111,10 @@ pub const Plan = struct {
 };
 
 pub fn main(init: std.process.Init) u8 {
+    // setup.exe usually runs elevated from the Downloads folder. Keep any
+    // DLL Windows loads on our behalf from now on out of that folder, so a
+    // file planted next to the installer cannot run as administrator.
+    _ = w32.SetDefaultDllDirectories(w32.LOAD_LIBRARY_SEARCH_SYSTEM32);
     const gpa = init.arena.allocator();
     const args = init.minimal.args.toSlice(gpa) catch return @intFromEnum(ExitCode.failure);
     var state: State = .{ .gpa = gpa, .io = init.io, .env = init.environ_map, .silent = false };
@@ -456,11 +460,12 @@ fn lockingProcesses(s: *const State, dir: []const u8) ![]const w32.RM_PROCESS_IN
     }
     if (files.items.len == 0) return &.{};
 
+    const rm = w32.RestartManager.load() orelse return &.{};
     var session: w32.DWORD = 0;
     var key: [w32.CCH_RM_SESSION_KEY + 1]u16 = @splat(0);
-    if (w32.RmStartSession(&session, 0, &key) != 0) return &.{};
-    defer _ = w32.RmEndSession(session);
-    if (w32.RmRegisterResources(session, @intCast(files.items.len), files.items.ptr, 0, null, 0, null) != 0) return &.{};
+    if (rm.RmStartSession(&session, 0, &key) != 0) return &.{};
+    defer _ = rm.RmEndSession(session);
+    if (rm.RmRegisterResources(session, @intCast(files.items.len), files.items.ptr, 0, null, 0, null) != 0) return &.{};
 
     var infos: []w32.RM_PROCESS_INFO = &.{};
     // The list can grow between the size query and the read; retry a few
@@ -469,7 +474,7 @@ fn lockingProcesses(s: *const State, dir: []const u8) ![]const w32.RM_PROCESS_IN
         var needed: u32 = 0;
         var count: u32 = @intCast(infos.len);
         var reasons: w32.DWORD = 0;
-        switch (w32.RmGetList(session, &needed, &count, if (infos.len > 0) infos.ptr else null, &reasons)) {
+        switch (rm.RmGetList(session, &needed, &count, if (infos.len > 0) infos.ptr else null, &reasons)) {
             0 => return infos[0..@min(count, infos.len)],
             @as(w32.DWORD, @intCast(w32.ERROR_MORE_DATA)) => infos = try s.gpa.alloc(w32.RM_PROCESS_INFO, needed + 4),
             else => return &.{},
@@ -687,17 +692,26 @@ fn editSystemPath(s: *const State, dir: []const u8, edit: PathEdit) !void {
 }
 
 /// Removes the running uninstaller and the install directory once this
-/// process has exited. A copy of this program in %TEMP% is started as a
-/// hidden helper (`/_cleanup`) with an inherited handle to this process;
-/// it waits on that handle, so it works however long this process stays
-/// open (for example while the final message box is shown).
+/// process has exited. A copy of this program is started as a hidden
+/// helper (`/_cleanup`) with an inherited handle to this process; it waits
+/// on that handle, so it works however long this process stays open (for
+/// example while the final message box is shown).
+///
+/// The copy goes in a new folder under %TEMP% that only administrators and
+/// SYSTEM can write to. For an uninstall run as SYSTEM (Intune, SCCM),
+/// %TEMP% is C:\Windows\Temp, where every user can create files: a
+/// predictable file name there could be replaced before it is started, and
+/// a DLL planted beside it would be loaded as SYSTEM.
 fn removeAfterExit(s: *const State, self_path: []const u8, dir: []const u8) !void {
     const temp = s.env.get("TEMP") orelse s.env.get("TMP") orelse return error.NoTempDir;
     const pid = w32.GetCurrentProcessId();
-    const helper_name = try std.fmt.allocPrint(s.gpa, "zstaller-uninstall-{d}.exe", .{pid});
-    const helper_path = try std.fs.path.join(s.gpa, &.{ temp, helper_name });
+    const helper_dir = try createPrivateDir(s, temp, pid);
+    const helper_path = try std.fs.path.join(s.gpa, &.{ helper_dir, "zstaller-uninstall.exe" });
     try Io.Dir.copyFileAbsolute(self_path, helper_path, s.io, .{});
-    errdefer Io.Dir.deleteFileAbsolute(s.io, helper_path) catch {};
+    errdefer {
+        Io.Dir.deleteFileAbsolute(s.io, helper_path) catch {};
+        Io.Dir.deleteDirAbsolute(s.io, helper_dir) catch {};
+    }
 
     const self_handle = w32.OpenProcess(w32.SYNCHRONIZE, 1, pid) orelse return error.OpenProcessFailed;
     defer _ = w32.CloseHandle(self_handle);
@@ -706,6 +720,7 @@ fn removeAfterExit(s: *const State, self_path: []const u8, dir: []const u8) !voi
         helper_path, dir, @intFromPtr(self_handle),
     });
     const line_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, line);
+    const helper_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, helper_path);
     // Start the helper in %TEMP%. It would otherwise inherit this
     // process's working directory, which is the install directory when the
     // uninstaller is opened from Explorer, and Windows cannot delete a
@@ -713,11 +728,34 @@ fn removeAfterExit(s: *const State, self_path: []const u8, dir: []const u8) !voi
     const temp_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, temp);
     var si: w32.STARTUPINFOW = .{ .cb = @sizeOf(w32.STARTUPINFOW) };
     var pi: w32.PROCESS_INFORMATION = undefined;
-    if (w32.CreateProcessW(null, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, temp_w.ptr, &si, &pi) == 0) {
+    if (w32.CreateProcessW(helper_w.ptr, line_w.ptr, null, null, 1, w32.CREATE_NO_WINDOW, null, temp_w.ptr, &si, &pi) == 0) {
         return error.CreateProcessFailed;
     }
     if (pi.hThread) |h| _ = w32.CloseHandle(h);
     if (pi.hProcess) |h| _ = w32.CloseHandle(h);
+}
+
+/// Creates a new folder in `parent` that only SYSTEM and administrators
+/// can open, with inheritance from `parent` turned off. A folder that
+/// already exists is never reused, as someone else may have made it.
+fn createPrivateDir(s: *const State, parent: []const u8, pid: w32.DWORD) ![]const u8 {
+    const sddl = std.unicode.utf8ToUtf16LeStringLiteral("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    var sd: ?*anyopaque = null;
+    if (w32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, w32.SDDL_REVISION_1, &sd, null) == 0) {
+        return error.SecurityDescriptorFailed;
+    }
+    defer _ = w32.LocalFree(sd);
+    const sa: w32.SECURITY_ATTRIBUTES = .{ .lpSecurityDescriptor = sd };
+
+    var attempt: u32 = 0;
+    while (attempt < 16) : (attempt += 1) {
+        const name = try std.fmt.allocPrint(s.gpa, "zstaller-{d}-{x}-{d}", .{ pid, w32.GetTickCount64(), attempt });
+        const path = try std.fs.path.join(s.gpa, &.{ parent, name });
+        const path_w = try std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, path);
+        if (w32.CreateDirectoryW(path_w.ptr, &sa) != 0) return path;
+        if (w32.GetLastError() != w32.ERROR_ALREADY_EXISTS) return error.CreateDirectoryFailed;
+    }
+    return error.CreateDirectoryFailed;
 }
 
 /// The `/_cleanup` helper started by `removeAfterExit`: waits for the
@@ -760,9 +798,18 @@ fn cleanup(s: *const State, dir: []const u8, wait_handle: ?usize, self_path: []c
         break;
     }
 
+    // Windows removes this copy, then its private folder, at the next
+    // restart, in the order they are queued.
     if (std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, self_path)) |self_w| {
         _ = w32.MoveFileExW(self_w.ptr, null, w32.MOVEFILE_DELAY_UNTIL_REBOOT);
     } else |_| {}
+    if (std.fs.path.dirname(self_path)) |helper_dir| {
+        if (std.mem.startsWith(u8, std.fs.path.basename(helper_dir), "zstaller-")) {
+            if (std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, helper_dir)) |dir_w| {
+                _ = w32.MoveFileExW(dir_w.ptr, null, w32.MOVEFILE_DELAY_UNTIL_REBOOT);
+            } else |_| {}
+        }
+    }
     return .success;
 }
 
