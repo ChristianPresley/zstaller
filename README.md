@@ -140,7 +140,8 @@ A complete, tested project lives in [`examples/sample`](examples/sample).
 | `windows.install_root` | `.program_files` | Where the default install folder goes: `.program_files`, `.program_data` or `.system_drive` (`C:\`). |
 | `windows.allow_install_dir_change` | `true` | Let users pick another folder in the EXE wizard. |
 | `windows.upgrade_code` | derived from name | MSI UpgradeCode. Set it once and never change it. |
-| `windows.add_to_path` | `.optional` | `.never`, `.optional` or `.always`. |
+| `windows.msi_version` | package version | MSI ProductVersion (`major.minor.build`, at most 255.255.65535). Set it when your version does not fit, e.g. calendar versions. See [Windows MSI](#windows-msi). |
+| `windows.add_to_path` | `.optional` | `.never`, `.optional` (on unless the user unticks it, or passes `/NOPATH` or `ADDTOPATH=0`) or `.always`. |
 | `windows.start_menu_shortcut` | `true` | Add an all-users Start Menu shortcut named after the display name. |
 | `windows.desktop_shortcut` | `.optional` | All-users desktop shortcut: `.never`, `.optional` (an unticked checkbox) or `.always`. |
 | `windows.close_running_apps` | `false` | Let the EXE installer and uninstaller close programs and services that have the installation's files in use, after asking. See [Windows EXE](#windows-exe). |
@@ -205,7 +206,15 @@ myapp-1.2.0-windows-x86_64-setup.exe /S /PATH /DESKTOP  silent, add to PATH and 
 ```
 
 `/D=`, `/PATH`, `/NOPATH`, `/DESKTOP` and `/NODESKTOP` also set the
-wizard's initial choices. Silent installs never show a window.
+wizard's initial choices. Silent installs never show a window. With
+`add_to_path = .optional`, both the wizard and silent installs add the
+folder to PATH unless told `/NOPATH`.
+
+Upgrades replace the files in place, or move the installation when a new
+folder is chosen. New files are written before old ones are removed, so a
+failed upgrade leaves the earlier version working. Installing an older
+version over a newer one is refused; uninstall the newer one first. Only a
+PATH entry the installer added itself is ever removed.
 
 `uninstall.exe` uninstalls when run with no options, removes every file the
 installer wrote, then deletes itself and the install directory once it has
@@ -284,8 +293,11 @@ msiexec /x myapp-1.2.0-windows-x86_64.msi /qn
 ```
 
 MSI versions use `major.minor.patch` only (major and minor up to 255, patch
-up to 65535); prerelease and build suffixes are dropped, so keep MSI release
-versions distinct in those three fields. See
+up to 65535). Pre-release and build suffixes are not part of the MSI
+version, but each release still gets its own product code, so the
+`1.0.0` MSI replaces the `1.0.0-rc.1` one. A version that does not fit,
+such as `2026.10.0`, fails the build; set `windows.msi_version` (for
+example `"26.10.0"`) and keep it increasing with every release. See
 [docs/msi.md](docs/msi.md) for how the MSI is written.
 
 ## Try the sample installers
@@ -384,7 +396,8 @@ Platforms share one interface, described in
   step.
 - The EXE and MSI user interfaces are minimal (message boxes and the basic
   Windows Installer progress UI).
-- MSI strings must be representable in Windows-1252.
+- MSI strings must be representable in Windows-1252 (Latin letters,
+  accents, curly quotes, dashes, the euro and trademark signs).
 
 ## Building from source
 

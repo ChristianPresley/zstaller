@@ -59,9 +59,12 @@ cabinet are stored as separate streams.
   directory and file.
 - The cabinet is stored as stream `product.cab` and referenced from the
   `Media` table as `#product.cab`.
-- **Upgrades.** The product code is derived from the upgrade code, version
-  and platform. The `Upgrade` table finds older versions
-  (`OLDERVERSIONFOUND`, removed by `RemoveExistingProducts` right after
+- **Upgrades.** The product code is derived from the upgrade code, the
+  full package version (pre-release and build included) and the platform,
+  so `1.0.0-rc.1` and `1.0.0` are different products with the same
+  ProductVersion. The `Upgrade` table finds older versions and other
+  products with the same ProductVersion (`OLDERVERSIONFOUND`, with
+  `VersionMaxInclusive`; removed by `RemoveExistingProducts` right after
   `InstallValidate`) and newer ones (`NEWERVERSIONFOUND`, which a launch
   condition turns into a clear error).
 - **PATH.** With `add_to_path = .optional` or `.always`, a component adds
