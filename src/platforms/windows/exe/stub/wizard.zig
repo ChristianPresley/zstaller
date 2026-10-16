@@ -97,6 +97,7 @@ const Id = struct {
     const path: u16 = 13;
     const desktop: u16 = 14;
     const launch: u16 = 15;
+    const mcp: u16 = 19;
     const license: u16 = 16;
     const progress: u16 = 17;
     const in_use: u16 = 18;
@@ -131,6 +132,7 @@ pub fn runInstall(s: *main.State, cmd: cli.Command, self_path: []const u8) ExitC
     wz.setText(wz.dir_edit, dir);
     Wizard.check(wz.path, add_to_path);
     Wizard.check(wz.desktop, desktop);
+    Wizard.check(wz.mcp, cmd.register_mcp orelse true);
     Wizard.check(wz.launch, config.launch_on_finish);
     return wz.run();
 }
@@ -188,6 +190,7 @@ const Wizard = struct {
     accept: w32.HWND = undefined,
     path: w32.HWND = undefined,
     desktop: w32.HWND = undefined,
+    mcp: w32.HWND = undefined,
     launch: w32.HWND = undefined,
     license: w32.HWND = undefined,
     progress: w32.HWND = undefined,
@@ -302,6 +305,7 @@ const Wizard = struct {
         wz.browse = wz.child(button, "B&rowse...", tab, 0, Id.browse);
         wz.path = wz.child(button, "Add " ++ config.display_name ++ " to the &PATH environment variable", tab | w32.BS_AUTOCHECKBOX, 0, Id.path);
         wz.desktop = wz.child(button, "Create a &desktop shortcut", tab | w32.BS_AUTOCHECKBOX, 0, Id.desktop);
+        wz.mcp = wz.child(button, "Add " ++ config.display_name ++ " to my &AI tools (" ++ config.mcp_clients ++ ")", tab | w32.BS_AUTOCHECKBOX, 0, Id.mcp);
         wz.launch = wz.child(button, "&Launch " ++ config.display_name, tab | w32.BS_AUTOCHECKBOX, 0, Id.launch);
         wz.progress = wz.child(progress, "", w32.WS_CHILD | w32.PBS_SMOOTH, 0, Id.progress);
         wz.in_use_list = wz.child(list_view, "", tab | w32.LVS_REPORT | w32.LVS_SINGLESEL | w32.LVS_SHOWSELALWAYS | w32.LVS_NOSORTHEADER, w32.WS_EX_CLIENTEDGE, Id.in_use);
@@ -370,7 +374,7 @@ const Wizard = struct {
         if (wz.icon_window) |i| _ = w32.SendMessageW(wz.hwnd, w32.WM_SETICON, w32.ICON_BIG, @bitCast(@intFromPtr(i)));
         if (wz.icon_window_small) |i| _ = w32.SendMessageW(wz.hwnd, w32.WM_SETICON, w32.ICON_SMALL, @bitCast(@intFromPtr(i)));
 
-        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.in_use_list, wz.back, wz.next, wz.cancel }) |h| {
+        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.mcp, wz.launch, wz.in_use_list, wz.back, wz.next, wz.cancel }) |h| {
             if (wz.font_body) |f| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
         }
         for (in_use_columns, 0..) |col, i| {
@@ -424,7 +428,7 @@ const Wizard = struct {
     // ---- Pages
 
     fn hasOptionsPage() bool {
-        return config.add_to_path == .optional or config.desktop_shortcut == .optional;
+        return config.add_to_path == .optional or config.desktop_shortcut == .optional or config.mcp_register == .optional;
     }
 
     /// The page after `p` in the install flow.
@@ -451,7 +455,7 @@ const Wizard = struct {
         wz.page = page;
 
         // Every control is hidden unless the page places it.
-        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.launch, wz.progress, wz.in_use_list }) |h| {
+        for ([_]w32.HWND{ wz.license, wz.accept, wz.dir_edit, wz.browse, wz.path, wz.desktop, wz.mcp, wz.launch, wz.progress, wz.in_use_list }) |h| {
             _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
         switch (page) {
@@ -472,6 +476,10 @@ const Wizard = struct {
                 }
                 if (config.desktop_shortcut == .optional) {
                     wz.place(wz.desktop, margin, y, width - 2 * margin, 22);
+                    y += 28;
+                }
+                if (config.mcp_register == .optional) {
+                    wz.place(wz.mcp, margin, y, width - 2 * margin, 22);
                 }
             },
             .installing, .uninstalling => {
@@ -662,6 +670,11 @@ const Wizard = struct {
                 .never => false,
                 .always => true,
                 .optional => checked(wz.desktop),
+            },
+            .register_mcp = switch (config.mcp_register) {
+                .never => false,
+                .always => true,
+                .optional => checked(wz.mcp),
             },
         };
         // Programs still running from an earlier install keep its files

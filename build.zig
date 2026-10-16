@@ -41,6 +41,8 @@ pub const SignRequest = api.SignRequest;
 pub const InstallCommand = api.InstallCommand;
 pub const McpOptions = api.McpOptions;
 pub const McpEnv = api.McpEnv;
+pub const McpRegister = api.McpRegister;
+pub const McpClients = api.McpClients;
 pub const Output = api.Output;
 pub const Installers = api.Installers;
 

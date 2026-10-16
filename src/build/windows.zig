@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const api = @import("api.zig");
+const mcp = @import("mcp.zig");
 const naming = @import("../naming.zig");
 const uuid = @import("../uuid.zig");
 const cli = @import("../platforms/windows/exe/stub/cli.zig");
@@ -169,6 +170,11 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
         payload_run.addFileArg(f.source);
         payload_run.addArg(f.dest);
     }
+    if (ctx.mcp_helper) |helper| {
+        payload_run.addArg("--file");
+        payload_run.addFileArg(helper);
+        payload_run.addArg(mcp.helperFileName(ctx));
+    }
 
     // Wizard artwork and license text, decoded and checked at build time.
     const wizard_run = ctx.runPack("wizard");
@@ -242,6 +248,13 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "before_uninstall_args", if (before_uninstall) |h| h.args else "");
     config.addOption(bool, "has_icon", o.icon != null);
     config.addOption([]const u8, "description", ctx.meta.description orelse "");
+    config.addOption(cli.McpMode, "mcp_register", if (ctx.mcp_helper == null) .never else switch (o.mcp.?.register) {
+        .never => .never,
+        .optional => .optional,
+        .always => .always,
+    });
+    config.addOption([]const u8, "mcp_helper", mcp.helperFileName(ctx));
+    config.addOption([]const u8, "mcp_clients", if (ctx.mcp_helper != null) mcp.clientLabels(ctx) else "");
     config.addOption(cli.PathMode, "add_to_path", switch (o.windows.add_to_path) {
         .never => .never,
         .optional => .optional,
@@ -372,6 +385,12 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         run.addArg("--file");
         run.addFileArg(f.source);
         run.addArg(f.dest);
+    }
+    if (ctx.mcp_helper) |helper| {
+        run.addArg("--file");
+        run.addFileArg(helper);
+        run.addArg(mcp.helperFileName(ctx));
+        run.addArgs(&.{ "--register-mcp", @tagName(o.mcp.?.register), "--mcp-helper", mcp.helperFileName(ctx) });
     }
     return out;
 }

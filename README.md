@@ -371,6 +371,7 @@ myapp-1.2.0-windows-x86_64-setup.exe /uninstall /S              the same, from t
 | `/D=<folder>` | Install folder. Quote the whole option when the path has spaces: `"/D=C:\My Apps\X"`. It may appear anywhere on the command line. |
 | `/PATH`, `/NOPATH` | Add, or do not add, the folder to the system PATH (with `add_to_path = .optional`). |
 | `/DESKTOP`, `/NODESKTOP` | Create, or do not create, a desktop shortcut (with `desktop_shortcut = .optional`). |
+| `/MCP`, `/NOMCP` | Register, or do not register, the MCP server with the user's AI tools (with `mcp.register = .optional`; see [MCP servers](#mcp-servers)). |
 | `/uninstall`, `/u` | Uninstall. `uninstall.exe` does this with no options. |
 | `/?`, `/h`, `/help` | Show the options. |
 
@@ -535,6 +536,7 @@ install fails. The product code to uninstall by is the key name under
 | `INSTALLDIR` | `<install_root>\<install_dir_name>` | Install folder. |
 | `ADDTOPATH` | `1` | With `add_to_path = .optional`: `0` leaves the folder off the system PATH. |
 | `DESKTOPSHORTCUT` | `0` | With `desktop_shortcut = .optional`: `1` creates a desktop shortcut. |
+| `REGISTERMCP` | `1` | With `mcp.register = .optional`: `0` does not register the MCP server with the user's AI tools. |
 
 Installing a newer version removes the older one first (a major
 upgrade). Installing an older version over a newer one stops with "A newer
@@ -571,6 +573,54 @@ with a double-click and the MCP Registry can list (its `fileSha256` is in
 the `.sha256` file). The bundle holds only the server program, so a
 server that needs other installed files should use the installers
 instead. Set `.bundle = false` to skip it.
+
+### Registering with AI tools
+
+The installers also register the server with the AI tools of the user
+who installs, so it shows up in them without any setup:
+
+| Tool | File | Default |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` (`mcpServers`) | on |
+| VS Code | `mcp.json` in the user settings folder (`servers`) | on |
+| VS Code Insiders | the same, under `Code - Insiders` | off |
+| Claude Desktop | `claude_desktop_config.json` | off (the `.mcpb` is the usual way) |
+| Cursor | `~/.cursor/mcp.json` | off |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | off |
+
+```zig
+.mcp = .{
+    // ...
+    .register = .optional, // .never, .optional or .always
+    .clients = .{ .cursor = true }, // the defaults, plus Cursor
+},
+```
+
+A small program, `zstaller-mcp`, is installed next to the application
+(on Ubuntu in `/usr/lib/<package>/`) and does the work:
+
+- **Windows EXE.** The Options page has a ticked "Add to my AI tools"
+  box; `/NOMCP` turns it off for silent installs and `/MCP` on. Setup
+  runs `zstaller-mcp register` as the signed-in user (through Explorer,
+  as for "Launch"), since Setup itself runs as administrator.
+- **Windows MSI.** `REGISTERMCP=0` turns it off. An impersonated deferred
+  custom action runs it as the user who installs.
+- **Ubuntu.** Package scripts never write to home folders, so each user
+  runs `/usr/lib/<package>/zstaller-mcp register` once.
+
+Uninstalling (and removing the .deb) runs `zstaller-mcp unregister
+--all-users`, which goes through every user profile on the machine.
+Users can also run `zstaller-mcp register`, `unregister` and `status`
+themselves.
+
+Only a tool the user has (its settings folder exists) gets an entry, and
+only entries whose `command` is this installation's program are changed
+or removed: a server the user set up under the same name is left alone
+and reported. The files are edited in place, so comments and formatting
+in them (VS Code allows comments) stay as they were. Each change is
+written to a temporary file that replaces the original, with its
+permissions, and the previous version is kept as `<file>.zstaller.bak`.
+A tool that is running may need a restart to see the change.
 
 `env` values end up in plain-text files, so never put secrets in them.
 The sample's `sample-tool mcp` is a small working server with one tool.

@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sample-tool mcp` is a small MCP server, and the Linux end-to-end test
   talks to it from inside the bundle.
 
+- The installers register the MCP server with the user's AI tools
+  (`mcp.register`, `mcp.clients`): Claude Code and VS Code by default,
+  VS Code Insiders, Claude Desktop, Cursor and Windsurf on request. A
+  small `zstaller-mcp` program installed with the application edits the
+  tools' files in place, keeping comments and formatting, and only ever
+  touches entries that run this installation's program. Setup has an
+  "Add to my AI tools" box and `/MCP` / `/NOMCP`, the MSI has
+  `REGISTERMCP`, and on Ubuntu users run `zstaller-mcp register`.
+  Uninstalling removes the entries from every user profile.
+
 - `windows.scope = .user` builds EXE and MSI installers that install for
   the current user only, without administrator rights: into
   `%LOCALAPPDATA%\Programs`, with the user's Start Menu, desktop, PATH

@@ -121,7 +121,11 @@ pub const Plan = struct {
     dir: []const u8,
     add_to_path: bool,
     desktop_shortcut: bool,
+    /// Register the MCP server with the user's AI tools.
+    register_mcp: bool = false,
 };
+
+const help_text = cli.helpText(config.mcp_register == .optional);
 
 pub fn main(init: std.process.Init) u8 {
     // setup.exe usually runs elevated from the Downloads folder. Keep any
@@ -133,7 +137,7 @@ pub fn main(init: std.process.Init) u8 {
     var state: State = .{ .gpa = gpa, .io = init.io, .env = init.environ_map, .silent = false };
 
     const cmd = cli.parse(if (args.len > 0) args[1..] else args) catch {
-        state.message("Unrecognized option.\n\n" ++ cli.help_text, w32.MB_ICONERROR);
+        state.message("Unrecognized option.\n\n" ++ help_text, w32.MB_ICONERROR);
         return @intFromEnum(ExitCode.usage);
     };
     state.silent = cmd.silent;
@@ -142,7 +146,7 @@ pub fn main(init: std.process.Init) u8 {
     if (action == .install or action == .uninstall) payload_bytes = readOwnPayload(init.io, gpa, self_path);
     const code: ExitCode = switch (action) {
         .help => blk: {
-            state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ cli.help_text, w32.MB_ICONINFORMATION);
+            state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ help_text, w32.MB_ICONINFORMATION);
             break :blk .success;
         },
         .install => if (newerInstalled(&state)) |installed|
@@ -231,6 +235,13 @@ fn installSilent(s: *State, cmd: cli.Command, self_path: []const u8) !ExitCode {
             .never => false,
             .always => true,
             .optional => cmd.desktop_shortcut orelse false,
+        },
+        // As in the wizard, where the box starts out ticked; /NOMCP turns
+        // it off.
+        .register_mcp = switch (config.mcp_register) {
+            .never => false,
+            .always => true,
+            .optional => cmd.register_mcp orelse true,
         },
     };
     if (try ensureNotRunning(s, dir, .install)) |code| return code;
@@ -400,7 +411,29 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
         if (code != 0) return s.report("{s} was installed, but {s}, which finishes setting it up, failed with exit code {d}.\n\n" ++
             "Run Setup again, or uninstall " ++ config.display_name ++ " from Settings > Apps.", .{ config.display_name, program, code });
     }
+    if (plan.register_mcp) {
+        Progress.step(progress, total, total, "Registering with AI tools...");
+        registerMcp(s, dir);
+    }
     Progress.step(progress, total, total, "");
+}
+
+/// Registers the MCP server with the AI tools of the user installing, by
+/// running zstaller-mcp (src/mcp/helper.zig) as that user: through the
+/// desktop's Explorer, as for `launch`, since an administrator's process
+/// could be another account's. A failure is not the installation's: the
+/// user can run `zstaller-mcp register` later.
+fn registerMcp(s: *const State, dir: []const u8) void {
+    const helper = std.fs.path.join(s.gpa, &.{ dir, config.mcp_helper }) catch return;
+    if (!config.per_user) {
+        const file_w = wide(s.gpa, helper) catch return;
+        const args_w = wide(s.gpa, "register") catch return;
+        const dir_w = wide(s.gpa, dir) catch return;
+        if (launchAsDesktopUser(file_w, args_w, dir_w, w32.SW_HIDE)) return;
+    }
+    if (runHook(s, dir, config.mcp_helper, "register")) |code| {
+        if (code != 0) std.debug.print("{s} register exited with code {d}\n", .{ config.mcp_helper, code });
+    } else |err| std.debug.print("could not run {s}: {t}\n", .{ config.mcp_helper, err });
 }
 
 /// Creates the install folder, or checks and secures an existing one, so
@@ -509,6 +542,15 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
         for (decoded.entries, list) |e, *p| p.* = e.path;
         break :blk list;
     };
+
+    // Remove the MCP server from the AI tools of every user it was
+    // registered for (only entries that run this installation's program).
+    if (config.mcp_register != .never) {
+        Progress.step(progress, 0, paths.len, "Removing it from AI tools...");
+        if (runHook(s, dir, config.mcp_helper, if (config.per_user) "unregister" else "unregister --all-users")) |code| {
+            if (code != 0) std.debug.print("{s} unregister exited with code {d}; uninstalling anyway\n", .{ config.mcp_helper, code });
+        } else |err| std.debug.print("could not run {s}: {t}; uninstalling anyway\n", .{ config.mcp_helper, err });
+    }
 
     // Undo what after_install did while the program is still there. A
     // failure must not keep the user from uninstalling.
@@ -906,12 +948,12 @@ pub fn launch(s: *const State, app_path: []const u8, dir: []const u8) void {
     const file_w = wide(s.gpa, app_path) catch return;
     const dir_w = wide(s.gpa, dir) catch return;
     // A per-user Setup already runs as the user.
-    if (!config.per_user and launchAsDesktopUser(file_w, dir_w)) return;
+    if (!config.per_user and launchAsDesktopUser(file_w, null, dir_w, w32.SW_SHOWNORMAL)) return;
     const verb_w = wide(s.gpa, "open") catch return;
     _ = w32.ShellExecuteW(null, verb_w, file_w, null, dir_w, w32.SW_SHOWNORMAL);
 }
 
-fn launchAsDesktopUser(file: [*:0]const u16, dir: [*:0]const u16) bool {
+fn launchAsDesktopUser(file: [*:0]const u16, args: ?[*:0]const u16, dir: [*:0]const u16, show: i32) bool {
     const hr_init = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
     if (hr_init < 0) return false;
     defer w32.CoUninitialize();
@@ -956,9 +998,12 @@ fn launchAsDesktopUser(file: [*:0]const u16, dir: [*:0]const u16) bool {
     defer w32.SysFreeString(file_b);
     const dir_b = w32.SysAllocString(dir) orelse return false;
     defer w32.SysFreeString(dir_b);
+    const args_b = if (args) |a| w32.SysAllocString(a) orelse return false else null;
+    defer if (args_b) |b| w32.SysFreeString(b);
+    const args_v: w32.VARIANT = if (args_b) |b| .{ .vt = w32.VT_BSTR, .value = .{ .bstrVal = b } } else .{};
     const dir_v: w32.VARIANT = .{ .vt = w32.VT_BSTR, .value = .{ .bstrVal = dir_b } };
-    const show_v: w32.VARIANT = .{ .vt = w32.VT_I4, .value = .{ .lVal = w32.SW_SHOWNORMAL } };
-    return w32.comMethod(w32.ShellExecuteFn, shell.?, w32.slot.ShellExecute)(shell.?, file_b, empty, dir_v, empty, show_v) >= 0;
+    const show_v: w32.VARIANT = .{ .vt = w32.VT_I4, .value = .{ .lVal = show } };
+    return w32.comMethod(w32.ShellExecuteFn, shell.?, w32.slot.ShellExecute)(shell.?, file_b, args_v, dir_v, empty, show_v) >= 0;
 }
 
 fn wide(gpa: Allocator, text: []const u8) ![:0]const u16 {

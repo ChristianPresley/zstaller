@@ -159,7 +159,7 @@ fn cmdChecksum(ctx: Ctx, args: []const []const u8) !void {
 fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
     const o = Options.parse(ctx.arena, args, 3, &.{
         "out",      "mtime",   "name",     "version", "arch",   "maintainer",       "description", "section", "priority", "homepage", "depends", "license", "copyright",
-        "icon-png", "preinst", "postinst", "prerm",   "postrm", "long-description",
+        "icon-png", "preinst", "postinst", "prerm",   "postrm", "long-description", "mcp-helper",
     });
     const name = o.required("name");
     if (!zstaller.naming.isValidDebPackageName(name))
@@ -212,6 +212,9 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
             if (!std.mem.startsWith(u8, text, "#!")) fail("deb.scripts." ++ script ++ ": '{s}' must start with #! (for example #!/bin/sh)", .{path});
             @field(scripts, script) = text;
         }
+    }
+    if (o.get("mcp-helper")) |helper| {
+        scripts.prerm = zstaller.deb.withPrermSnippet(ctx.arena, scripts.prerm, helper) catch oom();
     }
 
     var out: Io.Writer.Allocating = .init(ctx.gpa);
@@ -308,6 +311,7 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
     const o = Options.parse(ctx.arena, args, 2, &.{
         "out",           "mtime",           "name",         "version",    "manufacturer",     "description", "upgrade-code",  "platform",           "install-dir",      "add-to-path",           "license",          "icon",
         "shortcut-name", "shortcut-target", "install-root", "start-menu", "desktop-shortcut", "release",     "after-install", "after-install-args", "before-uninstall", "before-uninstall-args", "exe-registry-key", "per-user",
+        "register-mcp",  "mcp-helper",
     });
     var files: std.ArrayList(msi.File) = .empty;
     for (o.files.items) |f| {
@@ -350,6 +354,10 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
         .before_uninstall = if (o.get("before-uninstall")) |t| .{ .target = t, .args = o.get("before-uninstall-args") orelse "" } else null,
         .exe_registry_key = o.get("exe-registry-key"),
         .per_user = o.get("per-user") != null,
+        .mcp = if (o.get("mcp-helper")) |helper| .{
+            .helper = helper,
+            .optional = !std.mem.eql(u8, o.get("register-mcp") orelse "optional", "always"),
+        } else null,
         .files = files.items,
         .timestamp = o.mtime(),
     }) catch |err| switch (err) {

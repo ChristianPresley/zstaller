@@ -20,6 +20,7 @@
 
 const std = @import("std");
 const api = @import("api.zig");
+const registrar = @import("../mcp/registrar.zig");
 
 const LazyPath = std.Build.LazyPath;
 
@@ -143,4 +144,82 @@ pub fn addBundle(ctx: *const api.Context) ?LazyPath {
     run.addFileArg(srv.file);
     run.addArgs(&.{ entry_point, "755" });
     return out;
+}
+
+/// The registration program's file name on this target.
+pub fn helperFileName(ctx: *const api.Context) []const u8 {
+    return if (ctx.resolved_target.result.os.tag == .windows) "zstaller-mcp.exe" else "zstaller-mcp";
+}
+
+/// Where the .deb installs the registration program.
+pub fn debHelperPath(b: *std.Build, pkg_name: []const u8) []const u8 {
+    return b.fmt("/usr/lib/{s}/zstaller-mcp", .{pkg_name});
+}
+
+/// The clients `options.mcp.clients` turns on, by name.
+pub fn clientNames(ctx: *const api.Context) []const []const u8 {
+    const m = ctx.options.mcp.?;
+    var list: std.ArrayList([]const u8) = .empty;
+    inline for (@typeInfo(api.McpClients).@"struct".fields) |f| {
+        if (@field(m.clients, f.name)) list.append(ctx.b.allocator, f.name) catch @panic("OOM");
+    }
+    return list.items;
+}
+
+/// "Claude Code and VS Code": the clients, for the Setup wizard.
+pub fn clientLabels(ctx: *const api.Context) []const u8 {
+    const names = clientNames(ctx);
+    var out: std.ArrayList(u8) = .empty;
+    const a = ctx.b.allocator;
+    for (names, 0..) |n, i| {
+        if (i > 0) out.appendSlice(a, if (i + 1 == names.len) " and " else ", ") catch @panic("OOM");
+        const label = (std.meta.stringToEnum(registrar.Client, n) orelse unreachable).label();
+        out.appendSlice(a, label) catch @panic("OOM");
+    }
+    return out.items;
+}
+
+/// `zstaller-mcp` (src/mcp/helper.zig) for this target, configured for
+/// this server: it registers the server with the user's AI tools.
+pub fn addHelper(ctx: *const api.Context) ?LazyPath {
+    const b = ctx.b;
+    const m = ctx.options.mcp.?;
+    const srv = server(ctx) orelse return null;
+    const names = clientNames(ctx);
+    if (names.len == 0) {
+        ctx.fail("mcp.clients turns every AI tool off; turn one on, or set mcp.register = .never", .{});
+        return null;
+    }
+    const windows = ctx.resolved_target.result.os.tag == .windows;
+    const config = b.addOptions();
+    config.addOption([]const u8, "name", m.name orelse ctx.meta.name);
+    config.addOption([]const u8, "display_name", ctx.displayName());
+    // On Windows the program is next to zstaller-mcp, in whatever folder
+    // the user chose; on Ubuntu it is in /usr/bin.
+    config.addOption(bool, "program_relative", windows);
+    config.addOption([]const u8, "program", if (windows) srv.file_name else b.fmt("/usr/bin/{s}", .{srv.file_name}));
+    config.addOption([]const []const u8, "args", m.args);
+    var env_names: std.ArrayList([]const u8) = .empty;
+    var env_values: std.ArrayList([]const u8) = .empty;
+    for (m.env) |e| {
+        env_names.append(b.allocator, e.name) catch @panic("OOM");
+        env_values.append(b.allocator, e.value) catch @panic("OOM");
+    }
+    config.addOption([]const []const u8, "env_names", env_names.items);
+    config.addOption([]const []const u8, "env_values", env_values.items);
+    config.addOption([]const []const u8, "client_names", names);
+
+    const mod = b.createModule(.{
+        .root_source_file = ctx.zb.path("src/mcp/helper.zig"),
+        .target = ctx.resolved_target,
+        .optimize = .ReleaseSmall,
+        .imports = &.{.{ .name = "config", .module = config.createModule() }},
+    });
+    if (windows) {
+        mod.linkSystemLibrary("shell32", .{});
+        mod.linkSystemLibrary("ole32", .{});
+        mod.linkSystemLibrary("advapi32", .{});
+    }
+    const exe = b.addExecutable(.{ .name = "zstaller-mcp", .root_module = mod });
+    return api.packagedBinary(b, ctx.options, ctx.pack, ctx.target, ctx.resolved_target, exe);
 }

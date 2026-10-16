@@ -153,6 +153,27 @@ function Assert-Shortcut {
     Write-Host "Start Menu shortcut OK: $shortcut -> $($link.TargetPath)"
 }
 
+# The sample is an MCP server (.mcp in build.zig): installing registers it
+# with the user's AI tools, here Claude Code, which counts as installed when
+# ~/.claude exists.
+$claudeJson = Join-Path $HOME '.claude.json'
+New-Item -ItemType Directory -Force (Join-Path $HOME '.claude') | Out-Null
+
+function Test-McpRegistered {
+    if (-not (Test-Path $claudeJson)) { return $false }
+    return (Get-Content $claudeJson -Raw) -match '"zstaller-sample": \{"type":"stdio","command":"[^"]*sample-tool\.exe","args":\["mcp"\]\}'
+}
+
+function Assert-McpRegistered($expected) {
+    # Setup registers through the desktop's Explorer, which can finish
+    # after Setup does.
+    for ($i = 0; $i -lt 40 -and (Test-McpRegistered) -ne $expected; $i++) { Start-Sleep -Milliseconds 500 }
+    if ((Test-McpRegistered) -ne $expected) {
+        throw "MCP server registered in ${claudeJson}: $(Test-McpRegistered), expected ${expected}: $(Get-Content $claudeJson -Raw -ErrorAction SilentlyContinue)"
+    }
+    Write-Host "MCP registration OK: $expected"
+}
+
 function Assert-Removed {
     for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
     if (Test-Path $dir) { throw "$dir still exists: $(Get-ChildItem $dir -Force | Out-String)" }
@@ -160,12 +181,14 @@ function Assert-Removed {
     if (Test-Path $registered) { throw "the before_uninstall hook did not remove $registered" }
     if (Test-Path $shortcut) { throw 'Start Menu shortcut was not removed' }
     if (Test-Path $desktop) { throw 'desktop shortcut was not removed' }
+    Assert-McpRegistered $false
 }
 
 Write-Host '== MSI: silent install with PATH and a desktop shortcut'
 Invoke-Checked msiexec.exe "/i `"$msi`" /qn DESKTOPSHORTCUT=1 /l*v `"$PWD\msi-install.log`""
 Assert-Installed $true
 Assert-Desktop $true
+Assert-McpRegistered $true
 $product = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
     Where-Object { $_.DisplayName -eq 'Zstaller Sample' }
 if (-not $product) { throw 'MSI product is not registered in Apps & Features' }
@@ -173,9 +196,10 @@ Write-Host '== MSI: silent uninstall'
 Invoke-Checked msiexec.exe "/x `"$msi`" /qn /l*v `"$PWD\msi-uninstall.log`""
 Assert-Removed
 
-Write-Host '== MSI: silent install with ADDTOPATH=0, uninstall by product code'
-Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0"
+Write-Host '== MSI: silent install with ADDTOPATH=0 REGISTERMCP=0, uninstall by product code'
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn ADDTOPATH=0 REGISTERMCP=0"
 Assert-Installed $false
+Assert-McpRegistered $false
 Assert-Desktop $false
 # Only the MSI registers under its {ProductCode}; an EXE install uses a
 # named key, and passing that to msiexec opens its usage dialog.
@@ -201,6 +225,7 @@ Write-Host '== EXE: silent install with /PATH and /DESKTOP'
 Invoke-Checked $exe '/S /PATH /DESKTOP'
 Assert-Installed $true
 Assert-Desktop $true
+Assert-McpRegistered $true
 $entry = Get-ItemProperty $key
 if ($entry.DisplayVersion -ne '1.0.0') { throw 'EXE uninstall entry missing' }
 if (-not (Test-Path $uninstaller)) { throw "$uninstaller was not installed" }
@@ -225,8 +250,9 @@ Invoke-Checked cmd.exe "/d /s /c `"$quiet`""
 Assert-ExeRemoved
 
 Write-Host '== EXE: setup.exe /uninstall /S finds the installation in the registry'
-Invoke-Checked $exe '/S /NOPATH'
+Invoke-Checked $exe '/S /NOPATH /NOMCP'
 Assert-Installed $false
+Assert-McpRegistered $false
 Invoke-Checked $exe '/uninstall /S'
 Assert-ExeRemoved
 $p = Start-Process -FilePath $exe -ArgumentList '/uninstall /S' -Wait -PassThru
