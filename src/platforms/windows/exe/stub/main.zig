@@ -398,9 +398,13 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
     keep_dir = true;
 
     // An upgrade to another folder: remove what the earlier version
-    // installed in its folder.
+    // installed in its folder, after taking its program out of the AI
+    // tools with its own helper (the entries name the old folder).
     if (previous) |prev| {
-        if (!cli.sameDir(prev.dir, dir)) removeFolderInstall(s, prev.dir);
+        if (!cli.sameDir(prev.dir, dir)) {
+            if (config.mcp_register != .never) unregisterMcp(s, prev.dir);
+            removeFolderInstall(s, prev.dir);
+        }
     }
 
     if (config.after_install) |program| {
@@ -433,6 +437,15 @@ fn registerMcp(s: *const State, dir: []const u8) void {
     }
     if (runHook(s, dir, config.mcp_helper, "register")) |code| {
         if (code != 0) std.debug.print("{s} register exited with code {d}\n", .{ config.mcp_helper, code });
+    } else |err| std.debug.print("could not run {s}: {t}\n", .{ config.mcp_helper, err });
+}
+
+/// Removes the MCP server installed in `dir` from the AI tools of every
+/// user it was registered for, with the helper installed there. A failure
+/// does not stop an uninstall or upgrade.
+fn unregisterMcp(s: *const State, dir: []const u8) void {
+    if (runHook(s, dir, config.mcp_helper, if (config.per_user) "unregister" else "unregister --all-users")) |code| {
+        if (code != 0) std.debug.print("{s} unregister exited with code {d}\n", .{ config.mcp_helper, code });
     } else |err| std.debug.print("could not run {s}: {t}\n", .{ config.mcp_helper, err });
 }
 
@@ -547,9 +560,7 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
     // registered for (only entries that run this installation's program).
     if (config.mcp_register != .never) {
         Progress.step(progress, 0, paths.len, "Removing it from AI tools...");
-        if (runHook(s, dir, config.mcp_helper, if (config.per_user) "unregister" else "unregister --all-users")) |code| {
-            if (code != 0) std.debug.print("{s} unregister exited with code {d}; uninstalling anyway\n", .{ config.mcp_helper, code });
-        } else |err| std.debug.print("could not run {s}: {t}; uninstalling anyway\n", .{ config.mcp_helper, err });
+        unregisterMcp(s, dir);
     }
 
     // Undo what after_install did while the program is still there. A
