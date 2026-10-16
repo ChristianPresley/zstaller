@@ -27,11 +27,14 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the sample").dependOn(&run.step);
 
     // `zig build installer` cross-compiles the sample and writes MSI, EXE
-    // and .deb installers to zig-out/installers/.
+    // and .deb installers to zig-out/installers/. `-Dversion=1.0.1` builds
+    // them as another version, which the Windows test uses for upgrades.
+    const version = b.option([]const u8, "version", "Build the installers as this version instead of the one in build.zig.zon");
     const installers = zstaller.addInstallers(b, .{
         .executable = createExe,
         // Every target is built by default; listed here for clarity.
         .targets = &.{ .windows_x86_64, .windows_aarch64, .ubuntu_x86_64, .ubuntu_aarch64 },
+        .metadata = .{ .version = version },
         .icon = b.path("assets/sample.ico"),
         .extra_files = &.{
             .{ .source = b.path("README.md"), .dest = "README.md" },
