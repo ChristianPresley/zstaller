@@ -18,20 +18,26 @@
 //!
 //! Layout (all integers little-endian):
 //!
-//!     magic        "ZSTLPAY1"
+//!     magic        "ZSTLPAY2"
 //!     raw_len      u64   length of the decompressed body
+//!     digest       [32]u8 SHA-256 of the compressed body
 //!     body         raw DEFLATE stream of:
 //!         count    u32
 //!         count x  { path_len u16, path [path_len]u8, size u64, data [size]u8 }
 //!
 //! Paths are relative, use '/' as separator and are validated on both
 //! ends, so a crafted payload cannot write outside the install directory.
+//! The digest is checked before anything is decompressed, so a corrupted
+//! or truncated download is reported as such instead of reaching the
+//! decompressor.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const deflate = @import("../../../archive/deflate.zig");
 
-pub const magic = "ZSTLPAY1";
+pub const magic = "ZSTLPAY2";
+const Sha256 = std.crypto.hash.sha2.Sha256;
+const header_len = magic.len + 8 + Sha256.digest_length;
 
 pub const Entry = struct {
     path: []const u8,
@@ -57,8 +63,11 @@ pub fn encode(gpa: Allocator, entries: []const Entry) (Allocator.Error || Error)
     errdefer out.deinit();
     out.writer.writeAll(magic) catch return error.OutOfMemory;
     out.writer.writeInt(u64, body.written().len, .little) catch return error.OutOfMemory;
+    out.writer.writeAll(&@as([Sha256.digest_length]u8, @splat(0))) catch return error.OutOfMemory;
     try deflate.compressTo(gpa, &out.writer, body.written(), .raw);
-    return out.toOwnedSlice();
+    const bytes = try out.toOwnedSlice();
+    Sha256.hash(bytes[header_len..], bytes[16..header_len], .{});
+    return bytes;
 }
 
 /// A decoded payload. Entry slices point into `body`.
@@ -75,9 +84,12 @@ pub const Decoded = struct {
 
 /// Decodes and validates a payload produced by `encode`.
 pub fn decode(gpa: Allocator, bytes: []const u8) (Allocator.Error || Error)!Decoded {
-    if (bytes.len < 16 or !std.mem.eql(u8, bytes[0..8], magic)) return error.InvalidPayload;
+    if (bytes.len < header_len or !std.mem.eql(u8, bytes[0..8], magic)) return error.InvalidPayload;
     const raw_len = std.mem.readInt(u64, bytes[8..16], .little);
-    const body = deflate.decompress(gpa, bytes[16..], .raw) catch |err| switch (err) {
+    var digest: [Sha256.digest_length]u8 = undefined;
+    Sha256.hash(bytes[header_len..], &digest, .{});
+    if (!std.mem.eql(u8, &digest, bytes[16..header_len])) return error.InvalidPayload;
+    const body = deflate.decompress(gpa, bytes[header_len..], .raw) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidPayload,
     };
@@ -94,7 +106,7 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Allocator.Error || Error)!Deco
         if (body.len - pos < 2) return error.InvalidPayload;
         const plen = std.mem.readInt(u16, body[pos..][0..2], .little);
         pos += 2;
-        if (body.len - pos < plen + 8) return error.InvalidPayload;
+        if (body.len - pos < @as(usize, plen) + 8) return error.InvalidPayload;
         const path = body[pos..][0..plen];
         pos += plen;
         if (!isSafePath(path)) return error.InvalidPath;
@@ -162,4 +174,17 @@ test "rejects corrupt payloads" {
     defer testing.allocator.free(wrong_len);
     wrong_len[8] +%= 1;
     try testing.expectError(error.InvalidPayload, decode(testing.allocator, wrong_len));
+}
+
+test "rejects a payload whose compressed body was changed" {
+    const bytes = try encode(testing.allocator, &.{.{ .path = "a", .data = "abc" ** 50 }});
+    defer testing.allocator.free(bytes);
+    // Every single-byte change after the header, including ones that would
+    // still decompress, is caught by the digest.
+    for (header_len..bytes.len) |i| {
+        const copy = try testing.allocator.dupe(u8, bytes);
+        defer testing.allocator.free(copy);
+        copy[i] ^= 0x5a;
+        try testing.expectError(error.InvalidPayload, decode(testing.allocator, copy));
+    }
 }

@@ -131,7 +131,9 @@ pub fn main(init: std.process.Init) u8 {
             state.message(config.display_name ++ " " ++ config.version ++ " installer\n\n" ++ cli.help_text, w32.MB_ICONINFORMATION);
             break :blk .success;
         },
-        .install => if (state.silent)
+        .install => if (newerInstalled(&state)) |installed|
+            state.fail("Version {s} of " ++ config.display_name ++ " is already installed, which is newer than " ++ config.version ++ ". Uninstall it first to install this version.", .{installed})
+        else if (state.silent)
             installSilent(&state, cmd, self_path) catch |err| state.fail("Installation failed: {t}", .{err})
         else
             wizard.runInstall(&state, cmd, self_path),
@@ -157,6 +159,12 @@ pub fn defaultInstallDir(s: *const State) ![]const u8 {
     return cli.defaultInstallDir(s.gpa, @field(cli.InstallRoot, @tagName(config.install_root)), s.env, config.install_dir_name);
 }
 
+/// The installed version when it is newer than this installer's.
+fn newerInstalled(s: *const State) ?[]const u8 {
+    const installed = installedVersion(s) orelse return null;
+    return if (cli.isNewerVersion(installed, config.version)) installed else null;
+}
+
 /// The version already installed, if any.
 pub fn installedVersion(s: *const State) ?[]const u8 {
     if (readString(s.gpa, uninstall_key, "InstallLocation") == null) return null;
@@ -177,7 +185,9 @@ fn installSilent(s: *State, cmd: cli.Command, self_path: []const u8) !ExitCode {
         .add_to_path = switch (config.add_to_path) {
             .never => false,
             .always => true,
-            .optional => cmd.add_to_path orelse false,
+            // The same default as the wizard's ticked checkbox and the MSI's
+            // ADDTOPATH=1; /NOPATH turns it off.
+            .optional => cmd.add_to_path orelse true,
         },
         .desktop_shortcut = switch (config.desktop_shortcut) {
             .never => false,
@@ -214,35 +224,55 @@ fn uninstallDir(s: *const State, self_path: []const u8) ?[]const u8 {
 
 /// Installs the payload as `plan` says. Errors that need explaining are
 /// recorded with `State.report`.
+///
+/// New files are first written next to their final names with a
+/// temporary suffix. Only when all of them are written, which is where a
+/// full disk or an unreadable file shows up, are they renamed into place
+/// and the files an older version shipped but this one does not removed.
+/// A failure while writing leaves an earlier installation as it was, and
+/// a failed fresh install removes the folder it created.
 pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Progress) !void {
     const dir = plan.dir;
     const total = payloadSize();
     Progress.step(progress, 0, total, "Preparing files...");
-    var decoded = try payload.decode(s.gpa, payload_bytes);
+    var decoded = payload.decode(s.gpa, payload_bytes) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return s.report("This installer is damaged, so nothing was installed. Download it again.", .{}),
+    };
     defer decoded.deinit(s.gpa);
 
+    const previous = previousInstall(s);
+    const dir_existed = if (Io.Dir.openDirAbsolute(s.io, dir, .{})) |d| blk: {
+        d.close(s.io);
+        break :blk true;
+    } else |_| false;
     Io.Dir.cwd().createDirPath(s.io, dir) catch |err|
         return s.report("Could not create the folder {s}: {t}", .{ dir, err });
     var install_dir = try Io.Dir.openDirAbsolute(s.io, dir, .{});
     defer install_dir.close(s.io);
 
-    // Remove files from a previous version that this version no longer
-    // ships, so upgrades do not leave stale files behind.
-    if (readManifest(s, install_dir)) |old_paths| {
-        for (old_paths) |old| {
-            const still_shipped = for (decoded.entries) |e| {
-                if (std.mem.eql(u8, e.path, old)) break true;
-            } else false;
-            if (!still_shipped) install_dir.deleteFile(s.io, old) catch {};
-        }
-    }
-
+    // Stage every file.
+    var staged: usize = 0;
     var total_bytes: u64 = 0;
-    var manifest: std.ArrayList(u8) = .empty;
+    errdefer {
+        for (decoded.entries[0..staged]) |e| {
+            install_dir.deleteFile(s.io, stagedName(s, e.path)) catch {};
+        }
+        if (!dir_existed) Io.Dir.cwd().deleteTree(s.io, dir) catch {};
+    }
     for (decoded.entries) |e| {
         Progress.step(progress, total_bytes, total, e.path);
         if (std.fs.path.dirnamePosix(e.path)) |parent| try install_dir.createDirPath(s.io, parent);
-        install_dir.writeFile(s.io, .{ .sub_path = e.path, .data = e.data }) catch |err| switch (err) {
+        install_dir.writeFile(s.io, .{ .sub_path = stagedName(s, e.path), .data = e.data }) catch |err|
+            return s.report("Could not write {s}\\{s}: {t}", .{ dir, e.path, err });
+        staged += 1;
+        total_bytes += e.data.len;
+    }
+
+    // Put them in place.
+    var manifest: std.ArrayList(u8) = .empty;
+    for (decoded.entries) |e| {
+        install_dir.rename(stagedName(s, e.path), install_dir, e.path, s.io) catch |err| switch (err) {
             error.AccessDenied, error.FileBusy => return s.report(
                 "{s}\\{s} is in use by another program, so it cannot be replaced.\n\n" ++
                     "Close the program that is using it, then run Setup again.",
@@ -250,9 +280,17 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
             ),
             else => return err,
         };
-        total_bytes += e.data.len;
         try manifest.appendSlice(s.gpa, e.path);
         try manifest.append(s.gpa, '\n');
+    }
+    staged = 0;
+
+    // Remove files from a previous version that this version no longer
+    // ships, so upgrades do not leave stale files behind.
+    if (readManifest(s, install_dir)) |old_paths| {
+        for (old_paths) |old| {
+            if (!shipsPath(decoded.entries, old)) install_dir.deleteFile(s.io, old) catch {};
+        }
     }
     try install_dir.writeFile(s.io, .{ .sub_path = manifest_name, .data = manifest.items });
 
@@ -277,12 +315,82 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
             std.debug.print("could not create the desktop shortcut: {t}\n", .{err});
             break :sc null;
         };
+    } else if (previous) |prev| {
+        // Unticked on upgrade: remove the one the earlier version made.
+        if (prev.desktop_shortcut) |link| Io.Dir.deleteFileAbsolute(s.io, link) catch {};
     }
 
     Progress.step(progress, total_bytes, total, "Registering " ++ config.display_name ++ "...");
-    try registerUninstall(s, dir, uninstaller_path, total_bytes, plan.add_to_path, shortcuts);
-    if (plan.add_to_path) try editSystemPath(s, dir, .add);
+    const path_change = cli.planPathChange(
+        if (previous) |prev| prev.dir else null,
+        if (previous) |prev| prev.added_to_path else false,
+        dir,
+        plan.add_to_path,
+    );
+    if (path_change.remove) |old| _ = editSystemPath(s, old, .remove) catch false;
+    var owns_path_entry = path_change.keep_ownership;
+    if (path_change.add) owns_path_entry = (try editSystemPath(s, dir, .add)) or owns_path_entry;
+    try registerUninstall(s, dir, uninstaller_path, total_bytes, owns_path_entry, shortcuts);
+
+    // An upgrade to another folder: remove what the earlier version
+    // installed in its folder.
+    if (previous) |prev| {
+        if (!cli.sameDir(prev.dir, dir)) removeFolderInstall(s, prev.dir);
+    }
     Progress.step(progress, total, total, "");
+}
+
+/// What an earlier installation recorded in the registry.
+const PreviousInstall = struct {
+    dir: []const u8,
+    added_to_path: bool,
+    desktop_shortcut: ?[]const u8,
+};
+
+fn previousInstall(s: *const State) ?PreviousInstall {
+    const dir = readString(s.gpa, uninstall_key, "InstallLocation") orelse return null;
+    if (!cli.isValidInstallDir(dir)) return null;
+    return .{
+        .dir = dir,
+        .added_to_path = readDword(uninstall_key, "ZstallerAddedToPath", s.gpa) == 1,
+        .desktop_shortcut = readString(s.gpa, uninstall_key, "ZstallerDesktopShortcut"),
+    };
+}
+
+fn stagedName(s: *const State, path: []const u8) []const u8 {
+    return std.mem.concat(s.gpa, u8, &.{ path, ".zstaller-new" }) catch path;
+}
+
+fn shipsPath(entries: []const payload.Entry, path: []const u8) bool {
+    for (entries) |e| {
+        if (std.ascii.eqlIgnoreCase(e.path, path)) return true;
+    }
+    return false;
+}
+
+/// Removes the files an earlier version installed in `dir`, its
+/// uninstaller, and the folder when nothing else is left in it.
+fn removeFolderInstall(s: *const State, dir: []const u8) void {
+    var old_dir = Io.Dir.openDirAbsolute(s.io, dir, .{}) catch return;
+    defer old_dir.close(s.io);
+    const paths = readManifest(s, old_dir) orelse return;
+    for (paths) |p| old_dir.deleteFile(s.io, p) catch {};
+    old_dir.deleteFile(s.io, manifest_name) catch {};
+    old_dir.deleteFile(s.io, uninstaller_name) catch {};
+    removeEmptyParents(s, old_dir, paths);
+    Io.Dir.deleteDirAbsolute(s.io, dir) catch {};
+}
+
+/// Removes now-empty parent directories of `paths`, deepest first.
+fn removeEmptyParents(s: *const State, dir: Io.Dir, paths: []const []const u8) void {
+    var i = paths.len;
+    while (i > 0) {
+        i -= 1;
+        var parent = std.fs.path.dirnamePosix(paths[i]);
+        while (parent) |p| : (parent = std.fs.path.dirnamePosix(p)) {
+            dir.deleteDir(s.io, p) catch break;
+        }
+    }
 }
 
 /// Removes the installation in `dir`. Errors that need explaining are
@@ -301,10 +409,6 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
         break :blk list;
     };
 
-    if (readDword(uninstall_key, "ZstallerAddedToPath", s.gpa) == 1) {
-        editSystemPath(s, dir, .remove) catch {};
-    }
-
     for (paths, 0..) |p, i| {
         Progress.step(progress, i, paths.len, p);
         install_dir.deleteFile(s.io, p) catch |err| switch (err) {
@@ -320,14 +424,12 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
     }
     Progress.step(progress, paths.len, paths.len, "Removing shortcuts...");
     install_dir.deleteFile(s.io, manifest_name) catch {};
-    // Remove now-empty parent directories, deepest first.
-    var i = paths.len;
-    while (i > 0) {
-        i -= 1;
-        var parent = std.fs.path.dirnamePosix(paths[i]);
-        while (parent) |p| : (parent = std.fs.path.dirnamePosix(p)) {
-            install_dir.deleteDir(s.io, p) catch break;
-        }
+    removeEmptyParents(s, install_dir, paths);
+
+    // Only once the files are gone, so a failed uninstall can be run again
+    // and still finds everything it needs.
+    if (readDword(uninstall_key, "ZstallerAddedToPath", s.gpa) == 1) {
+        _ = editSystemPath(s, dir, .remove) catch false;
     }
 
     for ([_][]const u8{ "ZstallerShortcut", "ZstallerDesktopShortcut" }) |value| {
@@ -678,17 +780,19 @@ fn wide(gpa: Allocator, text: []const u8) ![:0]const u16 {
 
 const PathEdit = enum { add, remove };
 
-fn editSystemPath(s: *const State, dir: []const u8, edit: PathEdit) !void {
+/// Returns true when the system PATH was changed.
+fn editSystemPath(s: *const State, dir: []const u8, edit: PathEdit) !bool {
     const key = try createKey(s.gpa, environment_key);
     defer _ = w32.RegCloseKey(key);
     const current = try queryString(s.gpa, key, "Path");
     const updated = switch (edit) {
         .add => try cli.pathAppend(s.gpa, current, dir),
         .remove => try cli.pathRemove(s.gpa, current, dir),
-    } orelse return;
+    } orelse return false;
     try setString(s.gpa, key, "Path", updated, w32.REG_EXPAND_SZ);
-    const env_w = std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, "Environment") catch return;
+    const env_w = std.unicode.wtf8ToWtf16LeAllocZ(s.gpa, "Environment") catch return true;
     _ = w32.SendMessageTimeoutW(w32.HWND_BROADCAST, w32.WM_SETTINGCHANGE, 0, @bitCast(@intFromPtr(env_w.ptr)), w32.SMTO_ABORTIFHUNG, 5000, null);
+    return true;
 }
 
 /// Removes the running uninstaller and the install directory once this

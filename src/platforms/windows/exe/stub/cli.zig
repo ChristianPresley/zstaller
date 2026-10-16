@@ -256,7 +256,9 @@ fn normalizeDir(dir: []const u8) []const u8 {
     return d;
 }
 
-fn sameDir(a: []const u8, b: []const u8) bool {
+/// Returns true when `a` and `b` name the same folder, ignoring case and
+/// trailing separators.
+pub fn sameDir(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(normalizeDir(a), normalizeDir(b));
 }
 
@@ -279,7 +281,8 @@ pub fn pathAppend(gpa: Allocator, path_var: []const u8, dir: []const u8) Allocat
 }
 
 /// Returns `path_var` with every entry equal to `dir` removed, or null if
-/// it was not present.
+/// it was not present. Every other entry, empty ones included, is kept as
+/// it was.
 pub fn pathRemove(gpa: Allocator, path_var: []const u8, dir: []const u8) Allocator.Error!?[]u8 {
     if (!pathContains(path_var, dir)) return null;
     var out: std.ArrayList(u8) = .empty;
@@ -287,12 +290,47 @@ pub fn pathRemove(gpa: Allocator, path_var: []const u8, dir: []const u8) Allocat
     var it = std.mem.splitScalar(u8, path_var, ';');
     var first = true;
     while (it.next()) |entry| {
-        if (entry.len == 0 or sameDir(entry, dir)) continue;
+        if (entry.len > 0 and sameDir(entry, dir)) continue;
         if (!first) try out.append(gpa, ';');
         try out.appendSlice(gpa, entry);
         first = false;
     }
     return try out.toOwnedSlice(gpa);
+}
+
+/// How an install changes the system PATH.
+pub const PathChange = struct {
+    /// An entry an earlier installation added that must go.
+    remove: ?[]const u8 = null,
+    /// Add the new install directory (if not already there).
+    add: bool = false,
+    /// The entry an earlier installation added stays, and is still ours.
+    keep_ownership: bool = false,
+};
+
+/// Decides the PATH changes for installing to `dir`, given what an
+/// earlier installation (in `previous_dir`, if any) recorded. Only entries
+/// an installation added itself are ever removed, so a folder the user put
+/// on PATH stays there.
+pub fn planPathChange(previous_dir: ?[]const u8, previous_added: bool, dir: []const u8, want: bool) PathChange {
+    var change: PathChange = .{ .add = want };
+    if (previous_dir) |prev| if (previous_added) {
+        if (want and sameDir(prev, dir)) {
+            change.keep_ownership = true;
+        } else {
+            change.remove = prev;
+        }
+    };
+    return change;
+}
+
+/// Returns true when `installed` is a newer semantic version than
+/// `this`. Versions that do not parse are never newer, so a broken
+/// registry value cannot block an install.
+pub fn isNewerVersion(installed: []const u8, this: []const u8) bool {
+    const a = std.SemanticVersion.parse(installed) catch return false;
+    const b = std.SemanticVersion.parse(this) catch return false;
+    return a.order(b) == .gt;
 }
 
 /// Parses the uninstall manifest written next to the installed files: one
@@ -544,6 +582,38 @@ test "path append and remove" {
     const from_empty = (try pathAppend(gpa, ";", "C:\\X")).?;
     defer gpa.free(from_empty);
     try testing.expectEqualStrings("C:\\X", from_empty);
+
+    // Other entries, empty ones included, are left exactly as they were.
+    const kept = (try pathRemove(gpa, "C:\\A;;C:\\App;C:\\B;", "C:\\App")).?;
+    defer gpa.free(kept);
+    try testing.expectEqualStrings("C:\\A;;C:\\B;", kept);
+}
+
+test "path changes on install and upgrade" {
+    // Fresh install.
+    try testing.expectEqual(PathChange{ .add = true }, planPathChange(null, false, "C:\\App", true));
+    try testing.expectEqual(PathChange{}, planPathChange(null, false, "C:\\App", false));
+    // Upgrade in place, still wanted: the entry stays ours.
+    try testing.expectEqual(PathChange{ .add = true, .keep_ownership = true }, planPathChange("C:\\App", true, "c:\\app\\", true));
+    // Upgrade in place, now unticked: our entry goes.
+    const unticked = planPathChange("C:\\App", true, "C:\\App", false);
+    try testing.expectEqualStrings("C:\\App", unticked.remove.?);
+    try testing.expect(!unticked.add);
+    // Upgrade to another folder: the old entry goes, the new one is added.
+    const moved = planPathChange("C:\\Old", true, "C:\\New", true);
+    try testing.expectEqualStrings("C:\\Old", moved.remove.?);
+    try testing.expect(moved.add and !moved.keep_ownership);
+    // The earlier installation did not add the entry (the user did): never
+    // remove it.
+    try testing.expectEqual(PathChange{}, planPathChange("C:\\App", false, "C:\\App", false));
+}
+
+test "newer installed versions" {
+    try testing.expect(isNewerVersion("2.0.0", "1.9.9"));
+    try testing.expect(isNewerVersion("1.0.0", "1.0.0-rc.1"));
+    try testing.expect(!isNewerVersion("1.0.0", "1.0.0"));
+    try testing.expect(!isNewerVersion("1.0.0-rc.1", "1.0.0"));
+    try testing.expect(!isNewerVersion("garbage", "1.0.0"));
 }
 
 test "manifest parsing skips unsafe lines" {
