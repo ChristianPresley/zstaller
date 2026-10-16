@@ -46,8 +46,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release. The release workflow no longer builds anything: it installs,
   runs and uninstalls the uploaded files on every platform and then
   publishes the draft. It no longer runs when a `v*` tag is pushed.
+- `zig build installer` is faster on a fresh checkout or CI runner: the
+  `zstaller-pack` host tool compiles its standard library in ReleaseSmall
+  (zstaller's own code stays ReleaseSafe). The sample went from 48.9s to
+  28.7s with identical output.
 
 ### Fixed
+
+- Security: the elevated EXE installer no longer loads `RstrtMgr.dll`
+  from its own folder, and only loads system DLLs from System32, so a DLL
+  planted next to setup.exe cannot run as administrator. The uninstall
+  helper now runs from a new folder only administrators and SYSTEM can
+  write to, instead of a predictable file name in `%TEMP%`, which for
+  SYSTEM uninstalls is writable by every user.
 
 - The EXE uninstaller no longer fails with a bare "AccessDenied" when the
   application is running. Before it changes anything, it checks for
