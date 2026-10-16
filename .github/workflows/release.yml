@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.fetch.outputs.commit }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-installers
           path: installers
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.fetch.outputs.commit }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-installers
           path: installers
