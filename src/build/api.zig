@@ -325,7 +325,11 @@ pub fn createPackTool(zb: *Build) *Build.Step.Compile {
         .root_module = zb.createModule(.{
             .root_source_file = zb.path("src/pack/main.zig"),
             .target = host,
-            .optimize = .ReleaseSafe,
+            // The standard library follows the root module's mode, and
+            // compiling it in ReleaseSafe dominates a fresh build (about 38s
+            // here against 12s). zstaller's own code keeps its safety checks
+            // in the module below; packing speed is the same either way.
+            .optimize = .ReleaseSmall,
             .imports = &.{.{ .name = "zstaller", .module = createZstallerModule(zb, host, .ReleaseSafe) }},
         }),
     });
