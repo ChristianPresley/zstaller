@@ -61,7 +61,7 @@ jobs:
       - name: Build installers, verify and install the .deb
         run: examples/sample/scripts/test-linux.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest'
         with:
           name: sample-installers
@@ -100,7 +100,7 @@ jobs:
 
       - name: Upload msiexec logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: msiexec-logs-windows-latest
           path: examples/sample/zig-out/installers/*.log
@@ -128,7 +128,7 @@ jobs:
         shell: bash
         run: examples/sample/scripts/test-reproducible.sh "$RUNNER_TEMP/SHA256SUMS"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: reproducible-sums-${{ matrix.os }}
           path: ${{ runner.temp }}/SHA256SUMS
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload msiexec logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: msiexec-logs-windows-11-arm
           path: installers/*.log
