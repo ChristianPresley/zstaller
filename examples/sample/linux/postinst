@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copyright 2026 The zstaller Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# dpkg runs this after unpacking the package, with "configure" on install
+# and upgrade. A service would run "systemctl daemon-reload" and enable
+# its unit here.
+set -e
+if [ "$1" = configure ]; then
+    mkdir -p /var/lib/sample
+fi

@@ -38,6 +38,21 @@ pub const File = struct {
     mode: u32 = 0o644,
 };
 
+/// Maintainer scripts (see deb-postinst(5) and friends).
+pub const Scripts = struct {
+    preinst: ?[]const u8 = null,
+    postinst: ?[]const u8 = null,
+    prerm: ?[]const u8 = null,
+    postrm: ?[]const u8 = null,
+};
+
+/// Whether dpkg should treat the file at `path` as a configuration file:
+/// keep the administrator's changes on upgrade and ask before replacing
+/// them. Debian policy makes every file in /etc one.
+pub fn isConffile(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "/etc/");
+}
+
 pub const Package = struct {
     /// Debian package name (see `naming.debPackageName`).
     name: []const u8,
@@ -53,11 +68,14 @@ pub const Package = struct {
     homepage: ?[]const u8 = null,
     depends: ?[]const u8 = null,
     files: []const File,
+    /// Maintainer scripts dpkg runs around installing and removing the
+    /// package. Each must start with `#!`.
+    scripts: Scripts = .{},
     /// Modification time for every archive entry (seconds since epoch).
     mtime: u64 = 0,
 };
 
-pub const Error = Allocator.Error || Writer.Error || error{ NameTooLong, ValueTooLarge, InvalidPath, InvalidField };
+pub const Error = Allocator.Error || Writer.Error || error{ NameTooLong, ValueTooLarge, InvalidPath, InvalidField, InvalidScript };
 
 /// Writes the complete .deb for `pkg` to `out`.
 pub fn write(gpa: Allocator, out: *Writer, pkg: Package) Error!void {
@@ -79,7 +97,12 @@ pub fn write(gpa: Allocator, out: *Writer, pkg: Package) Error!void {
     try ar.writeMember("data.tar.gz", data_gz, pkg.mtime);
 }
 
-fn validate(pkg: Package) error{ InvalidPath, InvalidField }!void {
+fn validate(pkg: Package) error{ InvalidPath, InvalidField, InvalidScript }!void {
+    inline for (@typeInfo(Scripts).@"struct".fields) |field| {
+        if (@field(pkg.scripts, field.name)) |script| {
+            if (!std.mem.startsWith(u8, script, "#!")) return error.InvalidScript;
+        }
+    }
     for ([_][]const u8{ pkg.name, pkg.version, pkg.architecture, pkg.maintainer, pkg.description, pkg.section, pkg.priority }) |field| {
         if (field.len == 0 or std.mem.indexOfAny(u8, field, "\r\n") != null) return error.InvalidField;
     }
@@ -166,6 +189,20 @@ fn buildControlTar(gpa: Allocator, pkg: Package) Error![]u8 {
     try t.writeDir("./", pkg.mtime);
     try t.writeFileBytes("./control", control.written(), .{ .mtime = pkg.mtime });
     try t.writeFileBytes("./md5sums", md5sums.written(), .{ .mtime = pkg.mtime });
+
+    var conffiles: Writer.Allocating = .init(gpa);
+    defer conffiles.deinit();
+    for (files) |f| {
+        if (isConffile(f.path)) try conffiles.writer.print("{s}\n", .{f.path});
+    }
+    if (conffiles.written().len > 0) {
+        try t.writeFileBytes("./conffiles", conffiles.written(), .{ .mtime = pkg.mtime });
+    }
+    inline for (@typeInfo(Scripts).@"struct".fields) |field| {
+        if (@field(pkg.scripts, field.name)) |script| {
+            try t.writeFileBytes("./" ++ field.name, script, .{ .mode = 0o755, .mtime = pkg.mtime });
+        }
+    }
     try t.finish();
     return out.toOwnedSlice();
 }
@@ -270,6 +307,42 @@ test "rejects bad paths and fields" {
     bad = sample;
     bad.description = "two\nlines";
     try testing.expectError(error.InvalidField, write(testing.allocator, &out.writer, bad));
+}
+
+test "files in /etc are conffiles; scripts are executable" {
+    var pkg = sample;
+    pkg.files = &.{
+        .{ .path = "/usr/bin/hello", .data = "\x7fELF", .mode = 0o755 },
+        .{ .path = "/etc/hello/hello.conf", .data = "greeting = hi\n" },
+        .{ .path = "/etc/default/hello", .data = "ARGS=\n" },
+    };
+    pkg.scripts = .{ .postinst = "#!/bin/sh\nset -e\n" };
+    const tar_bytes = try buildControlTar(testing.allocator, pkg);
+    defer testing.allocator.free(tar_bytes);
+    var reader: std.Io.Reader = .fixed(tar_bytes);
+    var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var link_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var it: std.tar.Iterator = .init(&reader, .{ .file_name_buffer = &name_buf, .link_name_buffer = &link_buf });
+    var saw_conffiles = false;
+    var saw_postinst = false;
+    while (try it.next()) |entry| {
+        if (std.mem.eql(u8, entry.name, "./conffiles")) {
+            var buf: [128]u8 = undefined;
+            var w: Writer = .fixed(&buf);
+            try it.streamRemaining(entry, &w);
+            try testing.expectEqualStrings("/etc/default/hello\n/etc/hello/hello.conf\n", w.buffered());
+            saw_conffiles = true;
+        } else if (std.mem.eql(u8, entry.name, "./postinst")) {
+            try testing.expectEqual(@as(u32, 0o755), entry.mode);
+            saw_postinst = true;
+        }
+    }
+    try testing.expect(saw_conffiles and saw_postinst);
+
+    var out: Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    pkg.scripts = .{ .prerm = "echo no shebang\n" };
+    try testing.expectError(error.InvalidScript, write(testing.allocator, &out.writer, pkg));
 }
 
 test "dpkg-deb accepts the package (skipped when dpkg-deb is missing)" {

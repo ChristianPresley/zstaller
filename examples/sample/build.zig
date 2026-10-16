@@ -75,6 +75,22 @@ pub fn build(b: *std.Build) void {
         .deb = .{
             .maintainer = "The zstaller Authors <noreply@example.com>",
             .homepage = "https://github.com/ChristianPresley/zstaller",
+            // A man page for the tool, and a configuration file: files in
+            // /etc keep the administrator's changes on upgrade.
+            .files = &.{
+                .{ .source = b.path("linux/sample-tool.1"), .dest = "/usr/share/man/man1/sample-tool.1" },
+                .{ .source = b.path("linux/sample.conf"), .dest = "/etc/sample/sample.conf" },
+            },
+            // A menu entry that opens the sample in a terminal.
+            .desktop_entry = .{
+                .categories = "Utility;",
+                .terminal = true,
+                .icon = b.path("assets/sample.png"),
+            },
+            .scripts = .{
+                .postinst = b.path("linux/postinst"),
+                .postrm = b.path("linux/postrm"),
+            },
         },
     });
     b.step("installer", "Build installers for every target").dependOn(installers.step);

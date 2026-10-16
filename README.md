@@ -226,6 +226,9 @@ Ubuntu (`.deb = .{ ... }`):
 | `maintainer` | `windows.publisher` | Debian `Maintainer` field, `Name <email>`. Required if `windows.publisher` is not set. |
 | `section`, `priority` | `utils`, `optional` | Debian control fields. |
 | `homepage`, `depends` | none | Debian control fields. Binaries are static, so `depends` is rarely needed. |
+| `files` | none | Files at absolute paths: `source`, `dest` (e.g. `/usr/share/man/man1/myapp.1`) and `mode` (default `0o644`). Files in `/etc` become configuration files. |
+| `desktop_entry` | none | A menu entry: `categories` (default `"Utility;"`), `terminal`, and a square PNG `icon`. |
+| `scripts` | none | Maintainer scripts `preinst`, `postinst`, `prerm`, `postrm`, each starting with `#!`. |
 
 Mistakes in the configuration (a missing description, an invalid package
 name, a bad GUID, an extra file path that would escape the install folder,
@@ -252,9 +255,52 @@ message naming the option; `zig build` and `zig build test` keep working.
 ### Ubuntu `.deb`
 
 Installs the binary to `/usr/bin/<executable name>` (the `.name` your
-`executable` function gives it) and extra files to
-`/usr/share/<package>/<dest>`, with a `copyright` file generated from the
+`executable` function gives it), `programs` next to it, extra files to
+`/usr/share/<package>/<dest>`, and a `copyright` file generated from the
 license in `/usr/share/doc/<package>/`.
+
+`deb.files` puts files anywhere else: man pages, shell completions,
+systemd units, a default configuration. Files under `/etc` are listed as
+configuration files, so dpkg keeps the administrator's changes on upgrade
+and removes them only on purge. `deb.desktop_entry` adds the application
+to the desktop's menu, with its icon in the hicolor theme.
+`deb.scripts` are maintainer scripts; dpkg passes the action as `$1`:
+
+```zig
+.deb = .{
+    .maintainer = "Jane Doe <jane@example.com>",
+    .files = &.{
+        .{ .source = b.path("linux/myapp.1"), .dest = "/usr/share/man/man1/myapp.1" },
+        .{ .source = b.path("linux/myapp.service"), .dest = "/usr/lib/systemd/system/myapp.service" },
+        .{ .source = b.path("linux/config.toml"), .dest = "/etc/myapp/config.toml" },
+    },
+    .desktop_entry = .{ .categories = "Development;", .icon = b.path("assets/myapp-256.png") },
+    .scripts = .{ .postinst = b.path("linux/postinst"), .prerm = b.path("linux/prerm") },
+},
+```
+
+```sh
+#!/bin/sh
+# linux/postinst: start the service on install, restart it on upgrade.
+set -e
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable myapp.service
+    systemctl restart myapp.service
+fi
+```
+
+```sh
+#!/bin/sh
+# linux/prerm: stop it before removal.
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl disable --now myapp.service
+fi
+```
+
+The sample installs a man page, a configuration file, a menu entry and
+two maintainer scripts; see [`examples/sample/linux`](examples/sample/linux).
 
 ```sh
 sudo apt install ./myapp_1.2.0_amd64.deb     # install, or upgrade an older version
@@ -612,7 +658,7 @@ Each platform sits behind one interface,
 - The MSI shows Windows Installer's basic progress UI, not the EXE's
   wizard.
 - `extra_files` are installed with mode 644 on Linux; put programs in
-  `programs`.
+  `programs` and other executables in `deb.files` with `.mode = 0o755`.
 - MSI strings must be representable in Windows-1252 (Latin letters,
   accents, curly quotes, dashes, the euro and trademark signs).
 
