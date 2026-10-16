@@ -190,6 +190,36 @@ pub const ExecutableFn = *const fn (
     optimize: std.builtin.OptimizeMode,
 ) *Build.Step.Compile;
 
+/// A file `Options.sign` is asked to sign.
+pub const SignRequest = struct {
+    /// The unsigned file.
+    file: LazyPath,
+    /// Its file name, such as `myapp.exe` or
+    /// `myapp-1.2.0-windows-x86_64.msi`: the name to give the signed copy.
+    basename: []const u8,
+    kind: Kind,
+    target: Target,
+
+    pub const Kind = enum {
+        /// The application's Windows executable, before it goes into the
+        /// EXE installer and the MSI.
+        windows_binary,
+        /// The EXE installer. The copy it installs as `uninstall.exe` is
+        /// the same file, so it carries the same signature.
+        windows_setup,
+        /// The MSI package.
+        windows_msi,
+    };
+};
+
+/// Returns a signed copy of `request.file`, typically the output of a Run
+/// step that runs `signtool` or `osslsigncode`. The copy replaces the
+/// original in the rest of the build, so the installers contain the
+/// signed application and checksums are computed over the signed
+/// installers. Like `ExecutableFn`, it is a plain function: options it
+/// needs (a certificate, say) come from `b` or from the environment.
+pub const SignFn = *const fn (b: *Build, request: SignRequest) LazyPath;
+
 pub const Options = struct {
     /// Builds the application for one target. See `ExecutableFn`.
     executable: ExecutableFn,
@@ -213,6 +243,9 @@ pub const Options = struct {
     windows: WindowsOptions = .{},
     /// Settings for the Ubuntu .deb packages.
     deb: DebOptions = .{},
+    /// Signs Windows files: the application, then the finished EXE and
+    /// MSI installers. Null leaves them unsigned. See `SignFn`.
+    sign: ?SignFn = null,
     /// Subdirectory of the install prefix that receives the installers.
     install_subdir: []const u8 = "installers",
     /// Seconds since the Unix epoch used for every timestamp written into
@@ -439,7 +472,7 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         const binary = opts.executable(b, resolved, opts.optimize);
         if (needsSymbols(resolved.result)) binary.root_module.strip = false;
         const binary_file = if (resolved.result.os.tag == .windows)
-            normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename)
+            signed(b, opts, normalizePe(b, pack, t, binary.getEmittedBin(), binary.out_filename), binary.out_filename, .windows_binary, t)
         else
             binary.getEmittedBin();
         const ctx: Context = .{
@@ -468,8 +501,13 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         }
         if (clash) continue;
         for (t.formats()) |format| {
-            const file = Platform.addPackage(&ctx, format) orelse continue;
+            const package = Platform.addPackage(&ctx, format) orelse continue;
             const file_name = naming.installerFileName(b.allocator, meta.name, meta.version, t, format) catch @panic("OOM");
+            const file = switch (format) {
+                .exe => signed(b, opts, package, file_name, .windows_setup, t),
+                .msi => signed(b, opts, package, file_name, .windows_msi, t),
+                .deb => package,
+            };
             const sum_name = naming.checksumFileName(b.allocator, file_name) catch @panic("OOM");
 
             const sum_run = ctx.runPack("checksum");
@@ -490,6 +528,12 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
         }
     }
     return .{ .step = top, .outputs = outputs.items };
+}
+
+/// `file` signed by `options.sign`, or `file` itself without one.
+fn signed(b: *Build, options: *const Options, file: LazyPath, basename: []const u8, kind: SignRequest.Kind, target: Target) LazyPath {
+    const sign = options.sign orelse return file;
+    return sign(b, .{ .file = file, .basename = basename, .kind = kind, .target = target });
 }
 
 const MetadataResult = union(enum) {

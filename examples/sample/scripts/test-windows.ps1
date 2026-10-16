@@ -12,18 +12,23 @@
 # -InstallerDir tests already-built installers (for example the ones a
 # release is about to publish) instead of building them first.
 
-param([string]$InstallerDir)
+# -SignThumbprint builds them signed with that certificate (see
+# scripts/sign.ps1) and checks the signatures of the installers and of the
+# installed files.
+
+param([string]$InstallerDir, [string]$SignThumbprint)
 
 $ErrorActionPreference = 'Stop'
 if ($InstallerDir) {
     Set-Location $InstallerDir
 } else {
     Set-Location (Join-Path $PSScriptRoot '..')
-    zig build installer --summary all
+    $signArg = if ($SignThumbprint) { @("-Dsign=$SignThumbprint") } else { @() }
+    zig build installer --summary all @signArg
     if ($LASTEXITCODE -ne 0) { throw "zig build installer failed" }
     # Other versions of the sample, for the upgrade tests.
     foreach ($v in '1.0.1', '1.0.1-rc.1') {
-        zig build installer "-Dversion=$v" -p "zig-out/v$v"
+        zig build installer "-Dversion=$v" -p "zig-out/v$v" @signArg
         if ($LASTEXITCODE -ne 0) { throw "zig build installer -Dversion=$v failed" }
         Copy-Item "zig-out/v$v/installers/*-windows-*" zig-out/installers/
     }
@@ -38,9 +43,21 @@ foreach ($sum in Get-ChildItem *.sha256) {
     Write-Host "$name OK"
 }
 
+# Signed by the certificate given with -SignThumbprint, which the caller
+# made trusted on this machine.
+function Assert-Signed($file) {
+    if (-not $SignThumbprint) { return }
+    $sig = Get-AuthenticodeSignature $file
+    if ($sig.Status -ne 'Valid') { throw "$file signature: $($sig.Status) $($sig.StatusMessage)" }
+    if ($sig.SignerCertificate.Thumbprint -ne $SignThumbprint) { throw "$file is signed by $($sig.SignerCertificate.Subject)" }
+    Write-Host "Signed: $file"
+}
+
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
 $msi = (Resolve-Path "sample-1.0.0-windows-$arch.msi").Path
 $exe = (Resolve-Path "sample-1.0.0-windows-$arch-setup.exe").Path
+Assert-Signed $msi
+Assert-Signed $exe
 $dir = Join-Path $env:ProgramFiles 'Zstaller Sample'
 $app = Join-Path $dir 'sample.exe'
 $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Zstaller Sample.lnk'
@@ -108,6 +125,7 @@ function Assert-Installed($expectOnPath) {
     if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
     Assert-LockedDown $dir
+    Assert-Signed $app
     Assert-Shortcut
 }
 
@@ -164,6 +182,7 @@ Assert-Desktop $true
 $entry = Get-ItemProperty $key
 if ($entry.DisplayVersion -ne '1.0.0') { throw 'EXE uninstall entry missing' }
 if (-not (Test-Path $uninstaller)) { throw "$uninstaller was not installed" }
+Assert-Signed $uninstaller
 # Run the uninstaller directly with no action, as a double-click does: it
 # must uninstall, not reinstall, and remove itself and the directory.
 Write-Host '== EXE: uninstall.exe /S (no /uninstall)'

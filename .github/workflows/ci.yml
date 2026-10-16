@@ -73,9 +73,24 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build installers, silent MSI and EXE install/uninstall
+      # A throwaway certificate, trusted on this runner only, to test the
+      # `sign` hook: the installers, the installed application and
+      # uninstall.exe must all carry valid signatures.
+      - name: Create a test code-signing certificate
         shell: pwsh
-        run: examples/sample/scripts/test-windows.ps1
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=zstaller CI' `
+            -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+          $cer = Join-Path $env:RUNNER_TEMP 'zstaller-ci.cer'
+          Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+          foreach ($store in 'Root', 'TrustedPublisher') {
+            Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null
+          }
+          "ZSTALLER_SIGN=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build signed installers, silent MSI and EXE install/uninstall
+        shell: pwsh
+        run: examples/sample/scripts/test-windows.ps1 -SignThumbprint $env:ZSTALLER_SIGN
 
       - name: Upload msiexec logs
         if: always()
