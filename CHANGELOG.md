@@ -65,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper now runs from a new folder only administrators and SYSTEM can
   write to, instead of a predictable file name in `%TEMP%`, which for
   SYSTEM uninstalls is writable by every user.
+- Configuration mistakes are reported once, by the `installer` step, with
+  the option and value at fault. Manifest problems no longer print on
+  every `zig build`. Invalid `metadata.name` and `metadata.version`
+  overrides are named (a name such as `../x` used to crash the build).
+  `extra_files` destinations are checked up front, including ones that
+  would overwrite the application or `uninstall.exe`. Text an MSI
+  package cannot store is reported with the option and the character.
+  An icon that is not a
+  `.ico` file is reported as such instead of failing inside a generated
+  resource file or going into the MSI.
+- The EXE's Apps & Features entry shows the package name as Publisher
+  when `windows.publisher` is not set, as documented and as the MSI does.
+
 - MSI packages for pre-release versions no longer share a product code
   with the final release, which made installing `1.0.0` over
   `1.0.0-rc.1` fail with error 1638. Versions over MSI's limits

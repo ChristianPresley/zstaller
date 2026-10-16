@@ -102,6 +102,16 @@ pub fn isValidMsiVersion(v: []const u8) bool {
     return n == limits.len;
 }
 
+/// What is wrong with `dest` as a path relative to the install directory,
+/// or null when every installer can use it.
+pub fn installPathProblem(dest: []const u8) ?[]const u8 {
+    if (std.mem.indexOfScalar(u8, dest, '\\') != null) return "uses '\\'; separate folders with '/'";
+    if (dest.len > 0 and dest[0] == '/') return "must be relative to the install directory";
+    if (!@import("platforms/windows/exe/payload.zig").isSafePath(dest))
+        return "is not a valid install path: use a relative path such as 'docs/manual.txt', without '..', empty parts or the characters < > : \" | ? *";
+    return null;
+}
+
 /// Name of the SHA-256 sidecar written next to `file_name`.
 pub fn checksumFileName(gpa: Allocator, file_name: []const u8) Allocator.Error![]u8 {
     return std.fmt.allocPrint(gpa, "{s}.sha256", .{file_name});
@@ -130,6 +140,14 @@ test "debian names and versions" {
     const v = try debVersion(testing.allocator, "2.0.0+git-abc");
     defer testing.allocator.free(v);
     try testing.expectEqualStrings("2.0.0+git-abc", v);
+}
+
+test "install paths" {
+    try testing.expectEqual(null, installPathProblem("README.md"));
+    try testing.expectEqual(null, installPathProblem("docs/manual.txt"));
+    for ([_][]const u8{ "", "../x", "docs\\a", "/abs", "a//b", "a:b" }) |bad| {
+        try testing.expect(installPathProblem(bad) != null);
+    }
 }
 
 test "msi version strings" {

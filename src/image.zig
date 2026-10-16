@@ -61,6 +61,40 @@ pub fn decode(gpa: Allocator, bytes: []const u8) Error!Image {
 
 // ---- PNG
 
+/// What is wrong with `bytes` as a Windows .ico file, or null when its
+/// header and image directory are sound.
+pub fn icoProblem(bytes: []const u8) ?[]const u8 {
+    if (bytes.len >= 8 and std.mem.eql(u8, bytes[0..8], &png_signature)) return "it is a PNG image";
+    if (bytes.len >= 2 and std.mem.eql(u8, bytes[0..2], "BM")) return "it is a BMP image";
+    if (bytes.len < 6) return "the file is too short";
+    const reserved = std.mem.readInt(u16, bytes[0..2], .little);
+    const kind = std.mem.readInt(u16, bytes[2..4], .little);
+    const count = std.mem.readInt(u16, bytes[4..6], .little);
+    if (reserved != 0 or kind != 1) return "it does not start with an icon header";
+    if (count == 0) return "it contains no images";
+    if (bytes.len < 6 + @as(usize, count) * 16) return "its image directory is truncated";
+    for (0..count) |i| {
+        const entry = bytes[6 + i * 16 ..][0..16];
+        const size = std.mem.readInt(u32, entry[8..12], .little);
+        const offset = std.mem.readInt(u32, entry[12..16], .little);
+        if (size == 0 or @as(u64, offset) + size > bytes.len) return "an image in it lies outside the file";
+    }
+    return null;
+}
+
+test icoProblem {
+    var ico: [6 + 16 + 4]u8 = @splat(0);
+    std.mem.writeInt(u16, ico[2..4], 1, .little);
+    std.mem.writeInt(u16, ico[4..6], 1, .little);
+    std.mem.writeInt(u32, ico[6 + 8 ..][0..4], 4, .little);
+    std.mem.writeInt(u32, ico[6 + 12 ..][0..4], 22, .little);
+    try std.testing.expectEqual(null, icoProblem(&ico));
+    try std.testing.expectEqualStrings("it is a PNG image", icoProblem(&png_signature).?);
+    try std.testing.expect(icoProblem(ico[0..10]) != null);
+    std.mem.writeInt(u32, ico[6 + 12 ..][0..4], 23, .little);
+    try std.testing.expect(icoProblem(&ico) != null);
+}
+
 const png_signature = [8]u8{ 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
 
 pub fn decodePng(gpa: Allocator, bytes: []const u8) Error!Image {

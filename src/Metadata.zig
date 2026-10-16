@@ -232,7 +232,9 @@ fn optionalText(node: ?Zoir.Node, comptime field: []const u8, d: *Diagnostic) Pa
     return s;
 }
 
-fn isValidName(name: []const u8) bool {
+/// Returns true when `name` can name a package: letters, digits, '_',
+/// '-' and '.'.
+pub fn isValidName(name: []const u8) bool {
     if (name.len == 0) return false;
     for (name) |c| switch (c) {
         'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {},

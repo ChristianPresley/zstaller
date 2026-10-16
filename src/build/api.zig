@@ -243,12 +243,18 @@ pub const Context = struct {
     /// Seconds since the Unix epoch for package timestamps.
     source_date_epoch: u64,
     top: *Build.Step,
+    /// Messages already reported, so a problem shared by every target is
+    /// reported once.
+    failures: *std.StringHashMapUnmanaged(void),
+    /// `options.icon`, once checked to be a Windows .ico file. A PNG
+    /// renamed to .ico would otherwise go into the MSI unnoticed and fail
+    /// the EXE build with an error about a generated resource file.
+    icon: ?LazyPath,
 
     /// Records a configuration error. The `installer` step fails with
     /// `msg` when run; other steps are unaffected.
     pub fn fail(ctx: *const Context, comptime fmt: []const u8, args: anytype) void {
-        const msg = ctx.b.fmt("zstaller: " ++ fmt, args);
-        ctx.top.dependOn(&ctx.b.addFail(msg).step);
+        failOnce(ctx.b, ctx.top, ctx.failures, ctx.b.fmt("zstaller: " ++ fmt, args));
     }
 
     /// A `zstaller-pack` invocation.
@@ -293,6 +299,12 @@ pub const Context = struct {
 /// that is not packaged.
 pub fn needsSymbols(target: std.Target) bool {
     return target.os.tag == .windows and target.cpu.arch == .aarch64;
+}
+
+fn failOnce(b: *Build, top: *Build.Step, failures: *std.StringHashMapUnmanaged(void), msg: []const u8) void {
+    const seen = failures.getOrPut(b.allocator, msg) catch @panic("OOM");
+    if (seen.found_existing) return;
+    top.dependOn(&b.addFail(msg).step);
 }
 
 fn runPackTool(b: *Build, pack: *Build.Step.Compile, command: []const u8, target: Target) *Build.Step.Run {
@@ -350,14 +362,24 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
     const opts = b.allocator.create(Options) catch @panic("OOM");
     opts.* = options;
 
-    const meta = resolveMetadata(b, opts.*) catch |err| {
-        const msg = switch (err) {
-            error.ReadFailed => b.fmt("zstaller: cannot read {s}", .{opts.manifest_path}),
-            else => b.fmt("zstaller: {s}: {s}", .{ opts.manifest_path, @errorName(err) }),
-        };
-        top.dependOn(&b.addFail(msg).step);
-        return .{ .step = top, .outputs = &.{} };
+    const failures = b.allocator.create(std.StringHashMapUnmanaged(void)) catch @panic("OOM");
+    failures.* = .empty;
+
+    const meta = switch (resolveMetadata(b, opts.*)) {
+        .ok => |m| m,
+        .failed => |msg| {
+            top.dependOn(&b.addFail(b.fmt("zstaller: {s}", .{msg})).step);
+            return .{ .step = top, .outputs = &.{} };
+        },
     };
+    var config_ok = true;
+    for (opts.extra_files, 0..) |f, i| {
+        if (extraFileProblem(opts.extra_files, i)) |problem| {
+            failOnce(b, top, failures, b.fmt("zstaller: extra_files[{d}].dest '{s}' {s}", .{ i, f.dest, problem }));
+            config_ok = false;
+        }
+    }
+    if (!config_ok) return .{ .step = top, .outputs = &.{} };
 
     const epoch = opts.source_date_epoch orelse
         if (b.graph.environ_map.get("SOURCE_DATE_EPOCH")) |value|
@@ -369,6 +391,14 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             default_source_date_epoch;
 
     const pack = createPackTool(zb);
+    const icon: ?LazyPath = if (opts.icon) |path| blk: {
+        const run = b.addRunArtifact(pack);
+        run.setName("zstaller-pack check-icon");
+        run.addArg("check-icon");
+        run.addFileArg(path);
+        run.addArg(path.getDisplayName());
+        break :blk run.addOutputFileArg("icon.ico");
+    } else null;
     var outputs: std.ArrayList(Output) = .empty;
 
     for (opts.targets) |t| {
@@ -391,7 +421,19 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             .binary_file = binary_file,
             .source_date_epoch = epoch,
             .top = top,
+            .failures = failures,
+            .icon = icon,
         };
+        var clash = false;
+        for (opts.extra_files, 0..) |f, i| {
+            if (std.ascii.eqlIgnoreCase(f.dest, binary.out_filename) or
+                (resolved.result.os.tag == .windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe")))
+            {
+                ctx.fail("extra_files[{d}].dest '{s}' is the name of a file the installer writes itself", .{ i, f.dest });
+                clash = true;
+            }
+        }
+        if (clash) continue;
         for (t.formats()) |format| {
             const file = Platform.addPackage(&ctx, format) orelse continue;
             const file_name = naming.installerFileName(b.allocator, meta.name, meta.version, t, format) catch @panic("OOM");
@@ -417,26 +459,53 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
     return .{ .step = top, .outputs = outputs.items };
 }
 
-fn resolveMetadata(b: *Build, options: Options) !ResolvedMetadata {
+const MetadataResult = union(enum) {
+    ok: ResolvedMetadata,
+    /// What is wrong, for the `installer` step's error.
+    failed: []const u8,
+};
+
+/// Reads the manifest and applies `options.metadata`. Problems are
+/// returned as messages and reported only when the `installer` step runs,
+/// so `zig build` and `zig build test` stay quiet.
+fn resolveMetadata(b: *Build, options: Options) MetadataResult {
     const io = b.graph.io;
+    const path = options.manifest_path;
     var diag: Metadata.Diagnostic = .{};
-    var m = Metadata.load(b.allocator, io, b.build_root.handle, options.manifest_path, &diag) catch |err| switch (err) {
+    var m = Metadata.load(b.allocator, io, b.build_root.handle, path, &diag) catch |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
-        error.InvalidSyntax, error.NotAStruct, error.MissingField, error.InvalidField => {
-            std.debug.print("zstaller: {s}: {f}\n", .{ options.manifest_path, diag });
-            return err;
-        },
-        else => return error.ReadFailed,
+        error.InvalidSyntax, error.NotAStruct, error.MissingField, error.InvalidField => return .{ .failed = b.fmt("{s}: {f}", .{ path, diag }) },
+        else => return .{ .failed = b.fmt("cannot read {s}: {t}", .{ path, err }) },
     };
     const o = options.metadata;
+    if (o.name) |name| {
+        if (!Metadata.isValidName(name)) return .{ .failed = b.fmt(
+            "metadata.name '{s}' is not a valid package name: use letters, digits, '_', '-' and '.'",
+            .{name},
+        ) };
+        m.name = name;
+    }
     const version = o.version orelse m.version_string;
-    const semver = std.SemanticVersion.parse(version) catch return error.InvalidVersionOverride;
-    m.name = o.name orelse m.name;
-    return .{
+    const semver = std.SemanticVersion.parse(version) catch return .{ .failed = b.fmt(
+        "metadata.version '{s}' is not a semantic version (MAJOR.MINOR.PATCH, e.g. 1.2.0 or 1.2.0-rc.1)",
+        .{version},
+    ) };
+    if (o.description) |d| if (d.len == 0) return .{ .failed = "metadata.description must not be empty" };
+    return .{ .ok = .{
         .name = m.name,
         .version = version,
         .semver = semver,
         .description = o.description orelse m.description,
         .license = o.license orelse m.license,
-    };
+    } };
+}
+
+/// What is wrong with `files[i].dest`, or null when it is a valid install
+/// path not used by an earlier entry.
+fn extraFileProblem(files: []const ExtraFile, i: usize) ?[]const u8 {
+    if (naming.installPathProblem(files[i].dest)) |problem| return problem;
+    for (files[0..i]) |earlier| {
+        if (std.ascii.eqlIgnoreCase(earlier.dest, files[i].dest)) return "is used by more than one extra file";
+    }
+    return null;
 }
