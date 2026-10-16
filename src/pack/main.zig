@@ -156,7 +156,8 @@ fn cmdChecksum(ctx: Ctx, args: []const []const u8) !void {
 
 fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
     const o = Options.parse(ctx.arena, args, 3, &.{
-        "out", "mtime", "name", "version", "arch", "maintainer", "description", "section", "priority", "homepage", "depends", "license", "copyright",
+        "out",      "mtime",   "name",     "version", "arch",   "maintainer", "description", "section", "priority", "homepage", "depends", "license", "copyright",
+        "icon-png", "preinst", "postinst", "prerm",   "postrm",
     });
     const name = o.required("name");
     if (!zstaller.naming.isValidDebPackageName(name))
@@ -173,6 +174,24 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         files.append(ctx.arena, .{ .path = path, .data = text }) catch oom();
     }
 
+    if (o.get("icon-png")) |path| {
+        const data = ctx.readFile(path);
+        if (!std.mem.startsWith(u8, data, "\x89PNG")) fail("deb.desktop_entry.icon: '{s}' is not a PNG file", .{path});
+        const img = zstaller.image.decode(ctx.arena, data) catch fail("deb.desktop_entry.icon: '{s}' is not a PNG this tool can read; save it as a standard 24- or 32-bit PNG", .{path});
+        if (img.width != img.height or img.width < 16 or img.width > 1024)
+            fail("deb.desktop_entry.icon must be square, from 16x16 to 1024x1024 pixels; '{s}' is {d}x{d}", .{ path, img.width, img.height });
+        const dest = std.fmt.allocPrint(ctx.arena, "/usr/share/icons/hicolor/{d}x{d}/apps/{s}.png", .{ img.width, img.height, name }) catch oom();
+        files.append(ctx.arena, .{ .path = dest, .data = data }) catch oom();
+    }
+    var scripts: zstaller.deb.Scripts = .{};
+    inline for (.{ "preinst", "postinst", "prerm", "postrm" }) |script| {
+        if (o.get(script)) |path| {
+            const text = ctx.readFile(path);
+            if (!std.mem.startsWith(u8, text, "#!")) fail("deb.scripts." ++ script ++ ": '{s}' must start with #! (for example #!/bin/sh)", .{path});
+            @field(scripts, script) = text;
+        }
+    }
+
     var out: Io.Writer.Allocating = .init(ctx.gpa);
     defer out.deinit();
     zstaller.deb.write(ctx.gpa, &out.writer, .{
@@ -186,6 +205,7 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         .homepage = o.get("homepage"),
         .depends = o.get("depends"),
         .files = files.items,
+        .scripts = scripts,
         .mtime = o.mtime(),
     }) catch |err| fail("cannot build .deb: {t}", .{err});
     ctx.writeFile(o.required("out"), out.written());

@@ -162,6 +162,49 @@ pub const DebOptions = struct {
     /// `Depends` field. Binaries are statically linked (musl) so this is
     /// normally not needed.
     depends: ?[]const u8 = null,
+    /// Files installed at absolute paths: a man page, shell completions, a
+    /// systemd unit, a default configuration. Files in `/etc` are
+    /// configuration files: dpkg keeps the administrator's changes on
+    /// upgrade.
+    files: []const DebFile = &.{},
+    /// A menu entry, for applications with a window.
+    desktop_entry: ?DesktopEntry = null,
+    /// Maintainer scripts that dpkg runs on install, upgrade and removal,
+    /// for example to enable a systemd unit. Each must start with `#!`.
+    scripts: DebScripts = .{},
+};
+
+/// A file in a .deb package at an absolute path.
+pub const DebFile = struct {
+    source: LazyPath,
+    /// Absolute install path, e.g. `/usr/share/man/man1/myapp.1` or
+    /// `/etc/myapp/config.toml`.
+    dest: []const u8,
+    /// Permission bits: 0o755 for programs and scripts.
+    mode: u32 = 0o644,
+};
+
+/// A freedesktop.org menu entry, written to
+/// `/usr/share/applications/<package>.desktop`. Its name is the display
+/// name, its comment the description, and it starts the application.
+pub const DesktopEntry = struct {
+    /// Menu categories, each followed by `;`, e.g. `"Development;IDE;"`.
+    categories: []const u8 = "Utility;",
+    /// Start the application in a terminal window.
+    terminal: bool = false,
+    /// Square PNG icon, ideally 256x256 pixels, installed in the hicolor
+    /// icon theme. Without one, the menu shows a generic icon.
+    icon: ?LazyPath = null,
+};
+
+/// .deb maintainer scripts; see deb-postinst(5), deb-prerm(5) and
+/// friends. dpkg passes the action (`configure`, `remove`, `upgrade`, ...)
+/// as the first argument.
+pub const DebScripts = struct {
+    preinst: ?LazyPath = null,
+    postinst: ?LazyPath = null,
+    prerm: ?LazyPath = null,
+    postrm: ?LazyPath = null,
 };
 
 /// Values that replace the ones read from build.zig.zon.

@@ -1,0 +1,18 @@
+.\" Copyright 2026 The zstaller Authors
+.\" SPDX-License-Identifier: Apache-2.0
+.TH SAMPLE-TOOL 1 "" "zstaller sample" "User Commands"
+.SH NAME
+sample-tool \- print the SHA-256 of files
+.SH SYNOPSIS
+.B sample-tool
+.RI [ file ...]
+.SH DESCRIPTION
+With no arguments,
+.B sample-tool
+prints its version. Otherwise it prints the SHA-256 of each
+.I file
+in the format of
+.BR sha256sum (1).
+It is the second program of the zstaller sample, packaged with
+.B programs
+in build.zig.

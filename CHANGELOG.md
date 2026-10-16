@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `.deb` packages can install files anywhere (`deb.files`: man pages,
+  completions, systemd units, configuration), with files in `/etc` listed
+  as conffiles so dpkg keeps local changes on upgrade; a menu entry with
+  an icon (`deb.desktop_entry`); and maintainer scripts (`deb.scripts`).
+  The sample uses all of them, and the Linux end-to-end test upgrades it
+  with a changed configuration file and purges it.
+
 - `Options.programs` packages more programs next to the application, such
   as a command-line tool beside a GUI. Each is built per target like the
   application, normalized and signed the same way, installed in the

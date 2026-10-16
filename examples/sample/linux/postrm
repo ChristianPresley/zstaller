@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright 2026 The zstaller Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# dpkg runs this after removing the package; "purge" (apt purge) also
+# removes the data postinst created.
+set -e
+if [ "$1" = purge ]; then
+    rm -rf /var/lib/sample
+fi
