@@ -321,14 +321,14 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
     const icon = if (config.has_icon) uninstaller_path else app_path;
     var shortcuts: Shortcuts = .{};
     if (config.start_menu_shortcut) {
-        shortcuts.start_menu = createShortcut(s, try startMenuDir(s), app_path, dir, icon) catch |err| sc: {
+        shortcuts.start_menu = createShortcut(s, try startMenuDir(s), config.display_name, app_path, dir, icon, config.description) catch |err| sc: {
             // The application still works without its shortcut.
             std.debug.print("could not create the Start Menu shortcut: {t}\n", .{err});
             break :sc null;
         };
     }
     if (plan.desktop_shortcut) {
-        shortcuts.desktop = createShortcut(s, try desktopDir(s), app_path, dir, icon) catch |err| sc: {
+        shortcuts.desktop = createShortcut(s, try desktopDir(s), config.display_name, app_path, dir, icon, config.description) catch |err| sc: {
             std.debug.print("could not create the desktop shortcut: {t}\n", .{err});
             break :sc null;
         };
@@ -336,6 +336,20 @@ pub fn applyInstall(s: *State, plan: Plan, self_path: []const u8, progress: ?Pro
         // Unticked on upgrade: remove the one the earlier version made.
         if (prev.desktop_shortcut) |link| Io.Dir.deleteFileAbsolute(s.io, link) catch {};
     }
+    // Shortcuts to the other programs. Those an earlier version made go
+    // first, so that one this version no longer has does not stay behind.
+    if (readString(s.gpa, uninstall_key, "ZstallerProgramShortcuts")) |old| deleteShortcuts(s, old);
+    var program_links: std.ArrayList(u8) = .empty;
+    for (config.program_shortcut_names, config.program_shortcut_targets) |name, target| {
+        const target_path = try std.fs.path.join(s.gpa, &.{ dir, target });
+        const link = createShortcut(s, try startMenuDir(s), name, target_path, dir, target_path, "") catch |err| {
+            std.debug.print("could not create the Start Menu shortcut {s}: {t}\n", .{ name, err });
+            continue;
+        };
+        if (program_links.items.len > 0) try program_links.append(s.gpa, '|');
+        try program_links.appendSlice(s.gpa, link);
+    }
+    shortcuts.programs = program_links.items;
 
     Progress.step(progress, total_bytes, total, "Registering " ++ config.display_name ++ "...");
     const path_change = cli.planPathChange(
@@ -486,10 +500,8 @@ pub fn applyUninstall(s: *State, dir: []const u8, self_path: []const u8, progres
         _ = editSystemPath(s, dir, .remove) catch false;
     }
 
-    for ([_][]const u8{ "ZstallerShortcut", "ZstallerDesktopShortcut" }) |value| {
-        if (readString(s.gpa, uninstall_key, value)) |shortcut| {
-            Io.Dir.deleteFileAbsolute(s.io, shortcut) catch {};
-        }
+    for ([_][]const u8{ "ZstallerShortcut", "ZstallerDesktopShortcut", "ZstallerProgramShortcuts" }) |value| {
+        if (readString(s.gpa, uninstall_key, value)) |shortcuts| deleteShortcuts(s, shortcuts);
     }
     deleteKey(s.gpa, uninstall_key);
 
@@ -760,7 +772,15 @@ fn readManifest(s: *const State, dir: Io.Dir) ?[]const []const u8 {
 const Shortcuts = struct {
     start_menu: ?[]const u8 = null,
     desktop: ?[]const u8 = null,
+    /// Start Menu shortcuts to the other programs, separated by `|`.
+    programs: []const u8 = "",
 };
+
+/// Deletes the shortcut files in `list`, separated by `|`.
+fn deleteShortcuts(s: *const State, list: []const u8) void {
+    var it = std.mem.tokenizeScalar(u8, list, '|');
+    while (it.next()) |link| Io.Dir.deleteFileAbsolute(s.io, link) catch {};
+}
 
 fn registerUninstall(s: *const State, dir: []const u8, uninstaller: []const u8, total_bytes: u64, added_to_path: bool, shortcuts: Shortcuts) !void {
     const key = try createKey(s.gpa, uninstall_key);
@@ -779,6 +799,7 @@ fn registerUninstall(s: *const State, dir: []const u8, uninstaller: []const u8, 
     try setDword(s.gpa, key, "ZstallerAddedToPath", @intFromBool(added_to_path));
     if (shortcuts.start_menu) |path| try setString(s.gpa, key, "ZstallerShortcut", path, w32.REG_SZ);
     if (shortcuts.desktop) |path| try setString(s.gpa, key, "ZstallerDesktopShortcut", path, w32.REG_SZ);
+    try setString(s.gpa, key, "ZstallerProgramShortcuts", shortcuts.programs, w32.REG_SZ);
 }
 
 /// The Start Menu programs folder for all users.
@@ -794,9 +815,9 @@ fn desktopDir(s: *const State) ![]const u8 {
 }
 
 /// Writes `<folder>\<name>.lnk` and returns its path.
-fn createShortcut(s: *const State, folder: []const u8, target: []const u8, work_dir: []const u8, icon: []const u8) ![]const u8 {
+fn createShortcut(s: *const State, folder: []const u8, name: []const u8, target: []const u8, work_dir: []const u8, icon: []const u8, description: []const u8) ![]const u8 {
     try Io.Dir.cwd().createDirPath(s.io, folder);
-    const link_path = try std.fs.path.join(s.gpa, &.{ folder, config.display_name ++ ".lnk" });
+    const link_path = try std.fs.path.join(s.gpa, &.{ folder, try std.mem.concat(s.gpa, u8, &.{ name, ".lnk" }) });
 
     const hr_init = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
     if (hr_init < 0) return error.ComInitFailed;
@@ -810,7 +831,7 @@ fn createShortcut(s: *const State, folder: []const u8, target: []const u8, work_
     if (link.vtable.SetPath(link, try wide(s.gpa, target)) < 0) return error.ShortcutFailed;
     if (link.vtable.SetWorkingDirectory(link, try wide(s.gpa, work_dir)) < 0) return error.ShortcutFailed;
     if (link.vtable.SetIconLocation(link, try wide(s.gpa, icon), 0) < 0) return error.ShortcutFailed;
-    if (config.description.len > 0) _ = link.vtable.SetDescription(link, try wide(s.gpa, config.description));
+    if (description.len > 0) _ = link.vtable.SetDescription(link, try wide(s.gpa, description));
 
     var pf_obj: ?*anyopaque = null;
     if (link.vtable.QueryInterface(link, &w32.IID_IPersistFile, &pf_obj) < 0) return error.ShortcutFailed;
@@ -820,7 +841,6 @@ fn createShortcut(s: *const State, folder: []const u8, target: []const u8, work_
     return link_path;
 }
 
-/// Starts the installed application in its own window.
 /// Starts the installed application from the Finish page. Setup runs as
 /// administrator, and a program it starts directly would too: files it
 /// creates would belong to administrators and dragging files onto it from

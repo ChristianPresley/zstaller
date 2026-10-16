@@ -31,6 +31,7 @@ pub const DesktopShortcut = api.DesktopShortcut;
 pub const DebOptions = api.DebOptions;
 pub const MetadataOverrides = api.MetadataOverrides;
 pub const ExecutableFn = api.ExecutableFn;
+pub const Program = api.Program;
 pub const SignFn = api.SignFn;
 pub const SignRequest = api.SignRequest;
 pub const Output = api.Output;

@@ -89,10 +89,11 @@ fn fail(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 /// Simple `--key value` option parser. `--file` takes a fixed number of
-/// values and may repeat.
+/// values and may repeat; so may `--program-shortcut <name> <target>`.
 const Options = struct {
     values: std.StringHashMapUnmanaged([]const u8) = .empty,
     files: std.ArrayList([]const []const u8) = .empty,
+    program_shortcuts: std.ArrayList([]const []const u8) = .empty,
 
     fn parse(arena: Allocator, args: []const []const u8, file_arity: usize, allowed: []const []const u8) Options {
         var o: Options = .{};
@@ -103,6 +104,12 @@ const Options = struct {
                 if (i + file_arity >= args.len) fail("--file needs {d} values", .{file_arity});
                 o.files.append(arena, args[i + 1 ..][0..file_arity]) catch oom();
                 i += 1 + file_arity;
+                continue;
+            }
+            if (std.mem.eql(u8, a, "--program-shortcut")) {
+                if (i + 2 >= args.len) fail("--program-shortcut needs a name and a target", .{});
+                o.program_shortcuts.append(arena, args[i + 1 ..][0..2]) catch oom();
+                i += 3;
                 continue;
             }
             if (!std.mem.startsWith(u8, a, "--")) fail("unexpected argument '{s}'", .{a});
@@ -291,6 +298,11 @@ fn cmdMsi(ctx: Ctx, args: []const []const u8) !void {
                 break :blk std.meta.stringToEnum(msi.DesktopMode, d) orelse fail("invalid --desktop-shortcut '{s}'", .{d});
             },
         } else null,
+        .program_shortcuts = blk: {
+            const list = ctx.arena.alloc(msi.ProgramShortcut, o.program_shortcuts.items.len) catch oom();
+            for (o.program_shortcuts.items, list) |ps, *out_ps| out_ps.* = .{ .name = ps[0], .target = ps[1] };
+            break :blk list;
+        },
         .files = files.items,
         .timestamp = o.mtime(),
     }) catch |err| switch (err) {

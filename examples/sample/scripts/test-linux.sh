@@ -37,7 +37,8 @@ for deb in sample_1.0.0_*.deb; do
   echo "== dpkg-deb --info $deb"
   dpkg-deb --info "$deb"
   contents="$(dpkg-deb --contents "$deb")"
-  grep -q './usr/bin/sample' <<<"$contents"
+  grep -q './usr/bin/sample$' <<<"$contents"
+  grep -q -- '-rwxr-xr-x .* ./usr/bin/sample-tool$' <<<"$contents"
 done
 test "$(dpkg-deb --field sample_1.0.0_arm64.deb Architecture)" = arm64
 
@@ -49,11 +50,13 @@ out="$(sample)"
 echo "$out"
 grep -q "Hello from the zstaller sample on linux-$(uname -m)" <<<"$out"
 grep -q "Installed at: /usr/bin/sample" <<<"$out"
+sample-tool | grep -q '^sample-tool 1.0.0$'
+test "$(sample-tool /usr/share/sample/README.md | cut -d' ' -f1)" = "$(sha256sum /usr/share/sample/README.md | cut -d' ' -f1)"
 test -f /usr/share/sample/README.md
 test -f /usr/share/doc/sample/copyright
 dpkg -s sample | grep -q '^Version: 1.0.0$'
 
 echo "== remove"
 sudo dpkg -r sample
-if command -v sample >/dev/null; then echo "sample still installed"; exit 1; fi
+if command -v sample sample-tool >/dev/null; then echo "sample still installed"; exit 1; fi
 echo "Linux end-to-end test passed"

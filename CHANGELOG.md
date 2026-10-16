@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Options.programs` packages more programs next to the application, such
+  as a command-line tool beside a GUI. Each is built per target like the
+  application, normalized and signed the same way, installed in the
+  install folder on Windows and in `/usr/bin` (mode 755) on Ubuntu, and
+  may have a Start Menu shortcut in the EXE and MSI. The sample ships a
+  `sample-tool` this way.
+
 - `Options.sign` signs the Windows application before it is packed, then
   the finished setup program and MSI before their checksums are written.
   The sample builds signed with `-Dsign=<thumbprint>`, and Windows CI

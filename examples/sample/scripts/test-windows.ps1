@@ -126,6 +126,10 @@ function Assert-Installed($expectOnPath) {
     if ($LASTEXITCODE -ne 0) { throw ('{0} exited with 0x{1:X8}' -f $app, $LASTEXITCODE) }
     Write-Host $out
     if ($out -notmatch 'Hello from the zstaller sample on windows') { throw 'unexpected output' }
+    $tool = Join-Path $dir 'sample-tool.exe'
+    $toolOut = (& $tool) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $toolOut -notmatch '^sample-tool \d') { throw "sample-tool printed: $toolOut" }
+    Assert-Signed $tool
     if ((Test-OnPath) -ne $expectOnPath) { throw "PATH entry present: $(Test-OnPath), expected $expectOnPath" }
     Assert-LockedDown $dir
     Assert-Signed $app

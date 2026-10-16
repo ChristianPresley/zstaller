@@ -66,6 +66,11 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
     run.addArg("--file");
     run.addFileArg(ctx.binary_file);
     run.addArgs(&.{ b.fmt("/usr/bin/{s}", .{ctx.binary.out_filename}), "755" });
+    for (ctx.programs) |p| {
+        run.addArg("--file");
+        run.addFileArg(p.file);
+        run.addArgs(&.{ b.fmt("/usr/bin/{s}", .{p.name}), "755" });
+    }
     for (o.extra_files) |f| {
         run.addArg("--file");
         run.addFileArg(f.source);

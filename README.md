@@ -148,6 +148,12 @@ as [`examples/sample`](examples/sample/build.zig) does.
 const installers = zstaller.addInstallers(b, .{
     .executable = createExe,
     .targets = &.{ .windows_x86_64, .ubuntu_x86_64 },
+    // A command-line tool next to the app (`fn createCli` like createExe),
+    // and a settings program with its own Start Menu shortcut.
+    .programs = &.{
+        .{ .executable = createCli },
+        .{ .executable = createSettings, .shortcut = "My App Settings" },
+    },
     .icon = b.path("assets/myapp.ico"),
     .extra_files = &.{
         .{ .source = b.path("README.md"), .dest = "README.md" },
@@ -186,6 +192,7 @@ option into `zig-out/docs`.
 | `manifest_path` | `"build.zig.zon"` | Manifest that metadata is read from. |
 | `metadata` | none | Overrides for `name`, `version`, `description`, `license`, e.g. a version from `git describe`. |
 | `icon` | none | `.ico` file for the EXE, its wizard, Apps & Features and the MSI. Include 16, 32, 48 and 256 pixel images; ImageMagick makes one with `magick app.png -define icon:auto-resize=256,48,32,16 app.ico`. |
+| `programs` | none | More programs installed next to the application, each built by its own `executable` function, with an optional Start Menu `shortcut` name. On Ubuntu they go to `/usr/bin`. |
 | `extra_files` | none | Files installed next to the binary: `source` and `dest`, a relative path that may use `/` for subfolders. |
 | `sign` | none | Signs the Windows application, setup program and MSI. See [Code signing](#code-signing). |
 | `install_subdir` | `"installers"` | Output directory under `zig-out/`. |
@@ -604,8 +611,8 @@ Each platform sits behind one interface,
 
 - The MSI shows Windows Installer's basic progress UI, not the EXE's
   wizard.
-- Each package holds one executable plus `extra_files`, which are not
-  executable on Linux.
+- `extra_files` are installed with mode 644 on Linux; put programs in
+  `programs`.
 - MSI strings must be representable in Windows-1252 (Latin letters,
   accents, curly quotes, dashes, the euro and trademark signs).
 
