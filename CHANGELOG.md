@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MSI packages compress their cabinet on every CPU core: 64 MB of
+  application files compress in 0.75 s instead of 1.9 s on four cores,
+  with byte-identical output.
+
 - Rebuilding installers after an application change is faster: the
   application's files are appended to the linked setup program instead of
   being compiled into it, so the setup program is no longer recompiled
