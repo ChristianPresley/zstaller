@@ -42,8 +42,9 @@ pub const ExtraFile = struct {
 /// PATH.
 pub const PathMode = enum {
     never,
-    /// The EXE asks (or honours /PATH, /NOPATH; silent installs default to
-    /// no), and the MSI exposes an ADDTOPATH property that defaults to 1.
+    /// On unless the user says otherwise: the EXE wizard shows a ticked
+    /// checkbox, silent EXE installs honour /NOPATH, and the MSI exposes an
+    /// ADDTOPATH property that defaults to 1.
     optional,
     always,
 };
