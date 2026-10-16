@@ -24,6 +24,7 @@ const Metadata = @import("../Metadata.zig");
 const target_mod = @import("../target.zig");
 const naming = @import("../naming.zig");
 const Platform = @import("Platform.zig");
+const mcp = @import("mcp.zig");
 
 pub const Target = target_mod.Target;
 pub const Format = target_mod.Format;
@@ -188,6 +189,34 @@ pub const InstallCommand = struct {
     program: []const u8,
     /// Its arguments, quoted for you. At most 255 characters in all.
     args: []const []const u8 = &.{},
+};
+
+/// The application, or one of its programs, as an MCP (Model Context
+/// Protocol) server: a program that AI tools such as Claude start and talk
+/// to over standard input and output.
+pub const McpOptions = struct {
+    /// Server name shown in the AI tools: letters, digits, '_' and '-', at
+    /// most 64. Defaults to the package name.
+    name: ?[]const u8 = null,
+    /// The program that runs the server, by file name without `.exe`: one
+    /// of `programs`. Null: the application itself.
+    program: ?[]const u8 = null,
+    /// Arguments that start it as a server, e.g. `&.{ "mcp", "--stdio" }`.
+    args: []const []const u8 = &.{},
+    /// Environment variables for it. They end up in plain-text
+    /// configuration files, so never put secrets here.
+    env: []const McpEnv = &.{},
+    /// Also build `<name>-<version>-<target>.mcpb`, an MCP bundle that
+    /// Claude Desktop installs with a double-click and the MCP Registry
+    /// can list. It holds the server program only.
+    bundle: bool = true,
+    /// Square PNG icon for the bundle, ideally 512x512.
+    icon: ?LazyPath = null,
+};
+
+pub const McpEnv = struct {
+    name: []const u8,
+    value: []const u8,
 };
 
 pub const DebOptions = struct {
@@ -359,6 +388,8 @@ pub const Options = struct {
     windows: WindowsOptions = .{},
     /// Settings for the Ubuntu .deb packages.
     deb: DebOptions = .{},
+    /// Package the application as an MCP server. See `McpOptions`.
+    mcp: ?McpOptions = null,
     /// Signs Windows files: the application, then the finished EXE and
     /// MSI installers. Null leaves them unsigned. See `SignFn`.
     sign: ?SignFn = null,
@@ -615,13 +646,15 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
             .icon = icon,
         };
         if (!programsFit(&ctx)) continue;
-        for (t.formats()) |format| {
-            const package = Platform.addPackage(&ctx, format) orelse continue;
+        const mcpb: []const Format = if (opts.mcp) |m| (if (m.bundle) &.{.mcpb} else &.{}) else &.{};
+        const formats = std.mem.concat(b.allocator, Format, &.{ t.formats(), mcpb }) catch @panic("OOM");
+        for (formats) |format| {
+            const package = (if (format == .mcpb) mcp.addBundle(&ctx) else Platform.addPackage(&ctx, format)) orelse continue;
             const file_name = naming.installerFileName(b.allocator, meta.name, meta.version, t, format) catch @panic("OOM");
             const file = switch (format) {
                 .exe => signed(b, opts, package, file_name, .windows_setup, t),
                 .msi => signed(b, opts, package, file_name, .windows_msi, t),
-                .deb => package,
+                .deb, .mcpb => package,
             };
             const sum_name = naming.checksumFileName(b.allocator, file_name) catch @panic("OOM");
 

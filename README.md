@@ -195,6 +195,7 @@ option into `zig-out/docs`.
 | `programs` | none | More programs installed next to the application, each built by its own `executable` function, with an optional Start Menu `shortcut` name. On Ubuntu they go to `/usr/bin`. |
 | `extra_files` | none | Files installed next to the binary: `source` and `dest`, a relative path that may use `/` for subfolders. |
 | `sign` | none | Signs the Windows application, setup program and MSI. See [Code signing](#code-signing). |
+| `mcp` | none | Package the application, or one of `programs`, as an MCP server for AI tools. See [MCP servers](#mcp-servers). |
 | `install_subdir` | `"installers"` | Output directory under `zig-out/`. |
 | `source_date_epoch` | `SOURCE_DATE_EPOCH`, else 1980 | Timestamp written into packages. See [Reproducible builds](#reproducible-builds). |
 
@@ -546,6 +547,33 @@ version, but each release still gets its own product code, so the
 such as `2026.10.0`, fails the build; set `windows.msi_version` (for
 example `"26.10.0"`) and keep it increasing with every release. See
 [docs/msi.md](docs/msi.md) for how the MSI is written.
+
+## MCP servers
+
+If your program is an [MCP](https://modelcontextprotocol.io) server, one
+that AI tools such as Claude start and talk to over standard input and
+output, set `.mcp`:
+
+```zig
+.mcp = .{
+    .name = "myapp",                 // name shown in the AI tools
+    .program = "myapp-mcp",          // one of .programs; null: the application
+    .args = &.{ "mcp", "--stdio" },  // arguments that start the server
+    .env = &.{.{ .name = "MYAPP_LOG", .value = "warn" }},
+    .icon = b.path("assets/myapp-512.png"),
+},
+```
+
+Every target then also gets `<name>-<version>-<target>.mcpb`, an [MCP
+bundle](https://github.com/modelcontextprotocol/mcpb): a zip with a
+`manifest.json` and the server program, which Claude Desktop installs
+with a double-click and the MCP Registry can list (its `fileSha256` is in
+the `.sha256` file). The bundle holds only the server program, so a
+server that needs other installed files should use the installers
+instead. Set `.bundle = false` to skip it.
+
+`env` values end up in plain-text files, so never put secrets in them.
+The sample's `sample-tool mcp` is a small working server with one tool.
 
 ## Troubleshooting
 

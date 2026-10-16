@@ -82,7 +82,7 @@ try {
 }
 $built = Join-Path $prefix 'installers'
 $files = @(Get-ChildItem -LiteralPath $built -File |
-        Where-Object { $_.Extension -in '.msi', '.exe', '.deb', '.sha256' })
+        Where-Object { $_.Extension -in '.msi', '.exe', '.deb', '.mcpb', '.sha256' })
 Write-Host '== checksums'
 Test-Checksums $built
 
@@ -117,7 +117,7 @@ if ($Tag) {
         "git checkout $commit"
         'cd examples/sample'
         "SOURCE_DATE_EPOCH=$epoch zig build installer"
-        'sha256sum zig-out/installers/*.msi zig-out/installers/*.exe zig-out/installers/*.deb'
+        'sha256sum zig-out/installers/*.msi zig-out/installers/*.exe zig-out/installers/*.deb zig-out/installers/*.mcpb'
         '```'
     ) | Set-Content -LiteralPath $notes -Encoding utf8NoBOM
 

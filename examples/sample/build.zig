@@ -45,6 +45,14 @@ pub fn build(b: *std.Build) void {
         // A command-line tool installed next to the application. Give a
         // program a `.shortcut` name to add it to the Start Menu.
         .programs = &.{.{ .executable = createTool }},
+        // sample-tool is also an MCP server (`sample-tool mcp`). This
+        // builds sample-<version>-<target>.mcpb bundles for Claude Desktop.
+        .mcp = .{
+            .name = "zstaller-sample",
+            .program = "sample-tool",
+            .args = &.{"mcp"},
+            .icon = b.path("assets/sample.png"),
+        },
         .icon = b.path("assets/sample.ico"),
         .extra_files = &.{
             .{ .source = b.path("README.md"), .dest = "README.md" },

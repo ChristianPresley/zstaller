@@ -42,6 +42,7 @@ pub fn installerFileName(
         },
         .exe => std.fmt.allocPrint(gpa, "{s}-{s}-{s}-setup.exe", .{ name, version, target.slug() }),
         .msi => std.fmt.allocPrint(gpa, "{s}-{s}-{s}.msi", .{ name, version, target.slug() }),
+        .mcpb => std.fmt.allocPrint(gpa, "{s}-{s}-{s}.mcpb", .{ name, version, target.slug() }),
     };
 }
 

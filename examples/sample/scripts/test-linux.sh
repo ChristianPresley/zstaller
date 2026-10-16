@@ -30,6 +30,10 @@ expected=(
   sample-1.0.0-windows-aarch64-setup.exe
   sample_1.0.0_amd64.deb
   sample_1.0.0_arm64.deb
+  sample-1.0.0-windows-x86_64.mcpb
+  sample-1.0.0-windows-aarch64.mcpb
+  sample-1.0.0-ubuntu-x86_64.mcpb
+  sample-1.0.0-ubuntu-aarch64.mcpb
 )
 for f in "${expected[@]}"; do
   test -s "$f" || { echo "missing $f"; exit 1; }
@@ -77,6 +81,20 @@ if [ -n "${upgrade_dir:-}" ]; then
   dpkg -s sample | grep -q '^Version: 1.0.1$'
   grep -q '^greeting = Hi$' /etc/sample/sample.conf
 fi
+
+echo "== MCP bundle: manifest and a JSON-RPC handshake with the server inside"
+bundle_dir=$(mktemp -d)
+unzip -q "sample-1.0.0-ubuntu-$(uname -m | sed 's/arm64/aarch64/').mcpb" -d "$bundle_dir"
+grep -q '"entry_point": "server/sample-tool"' "$bundle_dir/manifest.json"
+test -x "$bundle_dir/server/sample-tool"
+reply=$(printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | "$bundle_dir/server/sample-tool" mcp)
+echo "$reply"
+echo "$reply" | grep -q '"serverInfo":{"name":"sample"'
+echo "$reply" | grep -q '"name":"sha256"'
+rm -rf "$bundle_dir"
 
 echo "== purge"
 sudo dpkg --purge sample

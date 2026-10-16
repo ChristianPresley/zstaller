@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Options.mcp` packages the application, or one of its programs, as an
+  MCP server. Every target gets a `.mcpb` bundle that Claude Desktop
+  installs with a double-click (manifest 0.3, checked with the official
+  `mcpb validate`). A new reproducible zip writer builds it. The sample's
+  `sample-tool mcp` is a small MCP server, and the Linux end-to-end test
+  talks to it from inside the bundle.
+
 - `windows.scope = .user` builds EXE and MSI installers that install for
   the current user only, without administrator rights: into
   `%LOCALAPPDATA%\Programs`, with the user's Start Menu, desktop, PATH
