@@ -121,6 +121,12 @@ pub const WindowsOptions = struct {
     /// so new versions upgrade old ones. Defaults to a GUID derived from
     /// the package name.
     upgrade_code: ?[]const u8 = null,
+    /// MSI ProductVersion, `major.minor.build` with limits 255.255.65535.
+    /// Defaults to the package version without its pre-release and build
+    /// parts. Set it when the package version does not fit, for example
+    /// calendar versions such as `2026.10.0`. It must grow with every
+    /// release, or upgrades stop working.
+    msi_version: ?[]const u8 = null,
     add_to_path: PathMode = .optional,
     /// Add a Start Menu shortcut, named after `display_name`, that opens
     /// the application. Both installers remove it on uninstall.

@@ -205,12 +205,26 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
     } else uuid.format(uuid.v5Parts(uuid.zstaller_namespace, &.{ "upgrade-code", ctx.meta.name }));
 
     var ver_buf: [32]u8 = undefined;
+    const msi_version = if (o.windows.msi_version) |v| blk: {
+        if (!naming.isValidMsiVersion(v)) {
+            ctx.fail("windows.msi_version '{s}' is not an MSI version: use major.minor.build, at most 255.255.65535", .{v});
+            return null;
+        }
+        break :blk v;
+    } else naming.msiVersion(&ver_buf, ctx.meta.semver) orelse {
+        ctx.fail("version {s} does not fit an MSI ProductVersion (at most 255.255.65535); set windows.msi_version, e.g. \"26.10.0\" for 2026.10.0, and keep it increasing with every release", .{ctx.meta.version});
+        return null;
+    };
     const run = ctx.runPack("msi");
     run.addArg("--out");
     const out = run.addOutputFileArg("package.msi");
     ctx.addMtimeArg(run);
     run.addArgs(&.{ "--name", ctx.displayName() });
-    run.addArgs(&.{ "--version", b.dupe(naming.msiVersion(&ver_buf, ctx.meta.semver)) });
+    run.addArgs(&.{ "--version", b.dupe(msi_version) });
+    // The full version keeps pre-releases and builds that share a numeric
+    // version apart (`1.0.0-rc.1` and `1.0.0`), so one can upgrade the
+    // other.
+    run.addArgs(&.{ "--release", ctx.meta.version });
     run.addArgs(&.{ "--manufacturer", ctx.publisher() });
     run.addArgs(&.{ "--description", description });
     run.addArgs(&.{ "--upgrade-code", b.dupe(&upgrade_code) });
