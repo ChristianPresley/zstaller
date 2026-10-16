@@ -52,6 +52,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdWizard(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "msi")) {
         try cmdMsi(ctx, rest);
+    } else if (std.mem.eql(u8, cmd, "check-icon")) {
+        cmdCheckIcon(ctx, rest);
     } else if (std.mem.eql(u8, cmd, "pe-normalize")) {
         try cmdPeNormalize(ctx, rest);
     } else {
@@ -76,7 +78,7 @@ const Ctx = struct {
 };
 
 fn usage() noreturn {
-    fail("usage: zstaller-pack <checksum|deb|payload|msi> [options]", .{});
+    fail("usage: zstaller-pack <checksum|deb|payload|wizard|msi|check-icon|pe-normalize> [options]", .{});
 }
 
 fn fail(comptime fmt: []const u8, args: anytype) noreturn {
@@ -178,6 +180,16 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         .mtime = o.mtime(),
     }) catch |err| fail("cannot build .deb: {t}", .{err});
     ctx.writeFile(o.required("out"), out.written());
+}
+
+/// `check-icon <in> <label> <out>`: copies a Windows .ico file, failing
+/// with a message naming `label` when it is not one.
+fn cmdCheckIcon(ctx: Ctx, args: []const []const u8) void {
+    if (args.len != 3) fail("usage: zstaller-pack check-icon <in> <label> <out>", .{});
+    const data = ctx.readFile(args[0]);
+    if (zstaller.image.icoProblem(data)) |problem|
+        fail("icon '{s}' is not a Windows .ico file: {s}. Convert it, for example with ImageMagick: magick app.png -define icon:auto-resize=256,48,32,16 app.ico", .{ args[1], problem });
+    ctx.writeFile(args[2], data);
 }
 
 fn cmdPayload(ctx: Ctx, args: []const []const u8) !void {

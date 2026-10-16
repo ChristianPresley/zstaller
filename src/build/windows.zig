@@ -22,6 +22,7 @@ const naming = @import("../naming.zig");
 const uuid = @import("../uuid.zig");
 const cli = @import("../platforms/windows/exe/stub/cli.zig");
 const payload = @import("../platforms/windows/exe/payload.zig");
+const msi_db = @import("../platforms/windows/msi/database.zig");
 const Build = std.Build;
 const LazyPath = Build.LazyPath;
 
@@ -77,6 +78,24 @@ fn installDirName(ctx: *const api.Context) ?[]const u8 {
     return std.mem.replaceOwned(u8, ctx.b.allocator, name, "/", "\\") catch @panic("OOM");
 }
 
+/// MSI databases store text in Windows-1252. Reports the first character
+/// of `value` that it cannot store, naming the option it came from.
+fn fitsWindows1252(ctx: *const api.Context, option: []const u8, value: []const u8) bool {
+    const view = std.unicode.Utf8View.init(value) catch {
+        ctx.fail("{s} is not valid UTF-8", .{option});
+        return false;
+    };
+    var it = view.iterator();
+    while (it.nextCodepointSlice()) |slice| {
+        const cp = std.unicode.utf8Decode(slice) catch unreachable;
+        if (msi_db.windows1252Byte(cp) == null) {
+            ctx.fail("{s} contains '{s}' (U+{X:0>4}), which MSI packages cannot store: they use the Windows-1252 character set", .{ option, slice, cp });
+            return false;
+        }
+    }
+    return true;
+}
+
 fn addExe(ctx: *const api.Context) ?LazyPath {
     const b = ctx.b;
     const o = ctx.options;
@@ -127,7 +146,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     config.addOption([]const u8, "name", ctx.meta.name);
     config.addOption([]const u8, "display_name", ctx.displayName());
     config.addOption([]const u8, "version", ctx.meta.version);
-    config.addOption([]const u8, "publisher", o.windows.publisher orelse "");
+    config.addOption([]const u8, "publisher", ctx.publisher());
     config.addOption([]const u8, "exe_name", exe_name);
     config.addOption([]const u8, "install_dir_name", dir_name);
     config.addOption(cli.InstallRoot, "install_root", switch (o.windows.install_root) {
@@ -174,7 +193,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     stub_mod.linkSystemLibrary("shell32", .{});
     stub_mod.linkSystemLibrary("gdi32", .{});
     stub_mod.linkSystemLibrary("comctl32", .{});
-    if (o.icon) |icon| {
+    if (ctx.icon) |icon| {
         _ = wf.addCopyFile(icon, "app.ico");
         const rc = wf.add("installer.rc", "1 ICON \"app.ico\"\n");
         stub_mod.addWin32ResourceFile(.{ .file = rc, .include_paths = &.{wf.getDirectory()} });
@@ -197,6 +216,16 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         return null;
     };
     const dir_name = installDirName(ctx) orelse return null;
+    if (!fitsWindows1252(ctx, "description", description) or
+        !fitsWindows1252(ctx, "windows.display_name", ctx.displayName()) or
+        !fitsWindows1252(ctx, "windows.publisher", ctx.publisher()) or
+        !fitsWindows1252(ctx, "windows.install_dir_name", dir_name) or
+        !fitsWindows1252(ctx, "license", ctx.meta.license orelse ""))
+        return null;
+    for (o.extra_files, 0..) |f, i| {
+        const label = b.fmt("extra_files[{d}].dest", .{i});
+        if (!fitsWindows1252(ctx, label, f.dest)) return null;
+    }
     const upgrade_code = if (o.windows.upgrade_code) |code| blk: {
         const parsed = uuid.parse(code) catch {
             ctx.fail("windows.upgrade_code '{s}' is not a GUID", .{code});
@@ -238,7 +267,7 @@ fn addMsi(ctx: *const api.Context) ?LazyPath {
         run.addArgs(&.{ "--desktop-shortcut", @tagName(o.windows.desktop_shortcut) });
     }
     if (ctx.meta.license) |l| run.addArgs(&.{ "--license", l });
-    if (o.icon) |icon| {
+    if (ctx.icon) |icon| {
         run.addArg("--icon");
         run.addFileArg(icon);
     }
