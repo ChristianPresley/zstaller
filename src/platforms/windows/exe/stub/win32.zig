@@ -228,6 +228,7 @@ pub const GUID = extern struct { data1: u32, data2: u16, data3: u16, data4: [8]u
 
 pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
 pub const CLSCTX_INPROC_SERVER: DWORD = 0x1;
+pub const CLSCTX_LOCAL_SERVER: DWORD = 0x4;
 
 pub const CLSID_ShellLink: GUID = .{ .data1 = 0x00021401, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
 pub const IID_IShellLinkW: GUID = .{ .data1 = 0x000214F9, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
@@ -851,3 +852,80 @@ pub extern "kernel32" fn GetLastError() callconv(.winapi) DWORD;
 pub const IDC_WAIT: usize = 32514;
 pub extern "user32" fn SetCursor(hCursor: ?HCURSOR) callconv(.winapi) ?HCURSOR;
 pub extern "user32" fn MessageBeep(uType: u32) callconv(.winapi) c_int;
+
+// ---- Starting a program as the desktop user, not elevated
+//
+// An elevated process asks the desktop's Explorer, which runs with the
+// user's normal token, to start the program: ShellWindows finds the
+// desktop's shell view, whose automation object is a Shell object with
+// IShellDispatch2::ShellExecute. The interfaces are reached by vtable slot
+// (`comMethod`), numbered in their declaration order in the Windows SDK
+// headers (exdisp.h, shobjidl_core.h, servprov.h, shldisp.h).
+
+pub const CLSID_ShellWindows: GUID = .{ .data1 = 0x9BA05972, .data2 = 0xF6A8, .data3 = 0x11CF, .data4 = .{ 0xA4, 0x42, 0x00, 0xA0, 0xC9, 0x0A, 0x8F, 0x39 } };
+pub const IID_IShellWindows: GUID = .{ .data1 = 0x85CB6900, .data2 = 0x4D95, .data3 = 0x11CF, .data4 = .{ 0x96, 0x0C, 0x00, 0x80, 0xC7, 0xF4, 0xEE, 0x85 } };
+pub const IID_IServiceProvider: GUID = .{ .data1 = 0x6D5140C1, .data2 = 0x7436, .data3 = 0x11CE, .data4 = .{ 0x80, 0x34, 0x00, 0xAA, 0x00, 0x60, 0x09, 0xFA } };
+pub const SID_STopLevelBrowser: GUID = .{ .data1 = 0x4C96BE40, .data2 = 0x915C, .data3 = 0x11CF, .data4 = .{ 0x99, 0xD3, 0x00, 0xAA, 0x00, 0x4A, 0xE8, 0x37 } };
+pub const IID_IShellBrowser: GUID = .{ .data1 = 0x000214E2, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+pub const IID_IDispatch: GUID = .{ .data1 = 0x00020400, .data2 = 0, .data3 = 0, .data4 = .{ 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+pub const IID_IShellFolderViewDual: GUID = .{ .data1 = 0xE7A1AF80, .data2 = 0x4D96, .data3 = 0x11CF, .data4 = .{ 0x96, 0x0C, 0x00, 0x80, 0xC7, 0xF4, 0xEE, 0x85 } };
+pub const IID_IShellDispatch2: GUID = .{ .data1 = 0xA4C6892C, .data2 = 0x3BA9, .data3 = 0x11D2, .data4 = .{ 0x9D, 0xEA, 0x00, 0xC0, 0x4F, 0xB1, 0x61, 0x62 } };
+
+pub const VT_EMPTY: u16 = 0;
+pub const VT_I4: u16 = 3;
+pub const VT_BSTR: u16 = 8;
+pub const CSIDL_DESKTOP: i32 = 0;
+pub const SWC_DESKTOP: c_int = 8;
+pub const SWFO_NEEDDISPATCH: c_int = 1;
+pub const SVGIO_BACKGROUND: u32 = 0;
+
+/// OLE Automation VARIANT, as laid out on 64-bit Windows.
+pub const VARIANT = extern struct {
+    vt: u16 = VT_EMPTY,
+    reserved: [3]u16 = .{ 0, 0, 0 },
+    value: extern union {
+        lVal: i32,
+        bstrVal: ?[*:0]u16,
+        pad: [2]u64,
+    } = .{ .pad = .{ 0, 0 } },
+};
+
+pub extern "oleaut32" fn SysAllocString(psz: [*:0]const WCHAR) callconv(.winapi) ?[*:0]u16;
+pub extern "oleaut32" fn SysFreeString(bstrString: ?[*:0]u16) callconv(.winapi) void;
+
+/// Vtable slots used below.
+pub const slot = struct {
+    pub const QueryInterface = 0;
+    pub const Release = 2;
+    /// IShellWindows::FindWindowSW
+    pub const FindWindowSW = 15;
+    /// IServiceProvider::QueryService
+    pub const QueryService = 3;
+    /// IShellBrowser::QueryActiveShellView
+    pub const QueryActiveShellView = 15;
+    /// IShellView::GetItemObject
+    pub const GetItemObject = 15;
+    /// IShellFolderViewDual::get_Application
+    pub const get_Application = 7;
+    /// IShellDispatch2::ShellExecute
+    pub const ShellExecute = 31;
+};
+
+pub const QueryInterfaceFn = *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const ReleaseFn = *const fn (*anyopaque) callconv(.winapi) u32;
+pub const FindWindowSWFn = *const fn (*anyopaque, *const VARIANT, *const VARIANT, c_int, *i32, c_int, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const QueryServiceFn = *const fn (*anyopaque, *const GUID, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const QueryActiveShellViewFn = *const fn (*anyopaque, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const GetItemObjectFn = *const fn (*anyopaque, u32, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const GetApplicationFn = *const fn (*anyopaque, *?*anyopaque) callconv(.winapi) HRESULT;
+pub const ShellExecuteFn = *const fn (*anyopaque, ?[*:0]u16, VARIANT, VARIANT, VARIANT, VARIANT) callconv(.winapi) HRESULT;
+
+/// The method in vtable slot `index` of the COM object `obj`.
+pub fn comMethod(comptime F: type, obj: *anyopaque, index: usize) F {
+    const vtable: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
+    return @ptrCast(@alignCast(vtable.*[index]));
+}
+
+pub fn comRelease(obj: *anyopaque) void {
+    _ = comMethod(ReleaseFn, obj, slot.Release)(obj);
+}

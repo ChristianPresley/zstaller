@@ -170,6 +170,7 @@ fn addExe(ctx: *const api.Context) ?LazyPath {
     stub_mod.linkSystemLibrary("advapi32", .{});
     stub_mod.linkSystemLibrary("user32", .{});
     stub_mod.linkSystemLibrary("ole32", .{});
+    stub_mod.linkSystemLibrary("oleaut32", .{});
     stub_mod.linkSystemLibrary("shell32", .{});
     stub_mod.linkSystemLibrary("gdi32", .{});
     stub_mod.linkSystemLibrary("comctl32", .{});
