@@ -325,6 +325,43 @@ test "joinArgs" {
     }
 }
 
+/// The "packed" form of a `{GUID}` that Windows Installer uses for
+/// registry key names, such as the product's upgrade code under
+/// `HKLM\SOFTWARE\Classes\Installer\UpgradeCodes`: the first three
+/// groups reversed, and the characters of each later byte swapped.
+pub fn packedGuid(guid: []const u8) ?[32]u8 {
+    if (guid.len != 38 or guid[0] != '{' or guid[37] != '}') return null;
+    var hex: [32]u8 = undefined;
+    var n: usize = 0;
+    for (guid[1..37], 1..) |c, i| {
+        if (i == 9 or i == 14 or i == 19 or i == 24) {
+            if (c != '-') return null;
+            continue;
+        }
+        if (!std.ascii.isHex(c)) return null;
+        hex[n] = std.ascii.toUpper(c);
+        n += 1;
+    }
+    var out: [32]u8 = undefined;
+    for (0..8) |i| out[i] = hex[7 - i];
+    for (0..4) |i| out[8 + i] = hex[11 - i];
+    for (0..4) |i| out[12 + i] = hex[15 - i];
+    var i: usize = 16;
+    while (i < 32) : (i += 2) {
+        out[i] = hex[i + 1];
+        out[i + 1] = hex[i];
+    }
+    return out;
+}
+
+test packedGuid {
+    try std.testing.expectEqualStrings(
+        "A0E6B1C3D7F825E4B9A1D6C2F4E8A701",
+        &packedGuid("{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}").?,
+    );
+    try std.testing.expectEqual(null, packedGuid("3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10"));
+}
+
 /// Returns true when `path_var` (a ';'-separated list) contains `dir`.
 pub fn pathContains(path_var: []const u8, dir: []const u8) bool {
     var it = std.mem.splitScalar(u8, path_var, ';');

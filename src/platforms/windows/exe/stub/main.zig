@@ -144,6 +144,8 @@ pub fn main(init: std.process.Init) u8 {
         },
         .install => if (newerInstalled(&state)) |installed|
             state.fail("Version {s} of " ++ config.display_name ++ " is already installed, which is newer than " ++ config.version ++ ". Uninstall it first to install this version.", .{installed})
+        else if (installedWithMsi())
+            state.fail(config.display_name ++ " is already installed from its MSI package. Uninstall it from Settings > Apps first, or install this version with the MSI.", .{})
         else if (state.silent)
             installSilent(&state, cmd, self_path) catch |err| state.fail("Installation failed: {t}", .{err})
         else
@@ -181,6 +183,18 @@ fn readOwnPayload(io: Io, gpa: Allocator, self_path: []const u8) []const u8 {
 fn newerInstalled(s: *const State) ?[]const u8 {
     const installed = installedVersion(s) orelse return null;
     return if (cli.isNewerVersion(installed, config.version)) installed else null;
+}
+
+/// Whether the MSI of this product is installed: Windows Installer
+/// registers every installed product under its upgrade code. The two
+/// installers would otherwise share files under two Apps & Features
+/// entries, and uninstalling either would break the other.
+fn installedWithMsi() bool {
+    const sub_key = std.unicode.utf8ToUtf16LeStringLiteral("SOFTWARE\\Classes\\Installer\\UpgradeCodes\\" ++ config.msi_upgrade_key);
+    var key: w32.HKEY = undefined;
+    if (w32.RegOpenKeyExW(w32.HKEY_LOCAL_MACHINE, sub_key, 0, w32.KEY_QUERY_VALUE | w32.KEY_WOW64_64KEY, &key) != w32.ERROR_SUCCESS) return false;
+    _ = w32.RegCloseKey(key);
+    return true;
 }
 
 /// The version already installed, if any.

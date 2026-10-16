@@ -45,7 +45,7 @@ root entry carries the Windows Installer CLSID
 Tables written: `Property`, `Directory`, `Component`, `File`,
 `FeatureComponents`, `Registry`, `Environment`, `Feature`, `Media`, `Icon`,
 `Shortcut`, `CreateFolder`, `MsiLockPermissionsEx`, `Upgrade`,
-`LaunchCondition`, `CustomAction` (only with hooks), `InstallExecuteSequence`,
+`LaunchCondition`, `AppSearch`, `RegLocator`, `CustomAction` (only with hooks), `InstallExecuteSequence`,
 `InstallUISequence`. The icon (a binary column of the `Icon` table) and the
 cabinet are stored as separate streams.
 
@@ -65,6 +65,11 @@ cabinet are stored as separate streams.
   dir get the same, so users cannot rename them. Files inherit from
   `INSTALLDIR`. (`MsiLockPermissionsEx` needs Windows Installer 5.0, which
   every supported Windows has.)
+- **EXE installation.** `AppSearch` reads `InstallLocation` from the
+  EXE installer's `Uninstall\zstaller.<name>` key (64-bit view) into
+  `EXEINSTALLDIR`, and the launch condition `Installed OR NOT
+  EXEINSTALLDIR` refuses a new install while it is set. Repairing and
+  removing an installed MSI are not affected.
 - **Hooks.** `after_install` and `before_uninstall` are `CustomAction`
   rows of type 3090: 18 (run an installed `.exe`, `Source` is its `File`
   key, `Target` its arguments with `[`, `]`, `{` and `}` escaped as
