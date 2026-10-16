@@ -319,8 +319,9 @@ fn encodeValue(v: Value, c: Column, ids: *const std.StringHashMapUnmanaged(u16))
     };
 }
 
-/// Converts UTF-8 to Windows-1252 for the characters both share (ASCII and
-/// Latin-1). Other characters cannot be stored in a 1252 database.
+/// Converts UTF-8 to Windows-1252: ASCII, Latin-1 and the characters
+/// 1252 puts in 0x80-0x9F (such as € ‘ ’ “ ” – — ™). Other characters
+/// cannot be stored in a 1252 database.
 fn toCodepage(a: Allocator, s: []const u8) Error![]const u8 {
     const ascii = for (s) |c| {
         if (c >= 0x80) break false;
@@ -330,11 +331,60 @@ fn toCodepage(a: Allocator, s: []const u8) Error![]const u8 {
     const view = std.unicode.Utf8View.init(s) catch return error.NotRepresentable;
     var it = view.iterator();
     while (it.nextCodepoint()) |cp| {
-        if (cp < 0x80 or (cp >= 0xA0 and cp <= 0xFF)) {
-            try out.append(a, @intCast(cp));
-        } else return error.NotRepresentable;
+        try out.append(a, windows1252Byte(cp) orelse return error.NotRepresentable);
     }
     return out.items;
+}
+
+/// The Windows-1252 byte for `cp`, or null when 1252 has no such
+/// character.
+pub fn windows1252Byte(cp: u21) ?u8 {
+    if (cp < 0x80 or (cp >= 0xA0 and cp <= 0xFF)) return @intCast(cp);
+    for (cp1252_high) |pair| {
+        if (pair[0] == cp) return pair[1];
+    }
+    return null;
+}
+
+/// The characters Windows-1252 maps into 0x80-0x9F. 0x81, 0x8D, 0x8F, 0x90
+/// and 0x9D are unassigned.
+const cp1252_high = [_]struct { u21, u8 }{
+    .{ 0x20AC, 0x80 },
+    .{ 0x201A, 0x82 },
+    .{ 0x0192, 0x83 },
+    .{ 0x201E, 0x84 },
+    .{ 0x2026, 0x85 },
+    .{ 0x2020, 0x86 },
+    .{ 0x2021, 0x87 },
+    .{ 0x02C6, 0x88 },
+    .{ 0x2030, 0x89 },
+    .{ 0x0160, 0x8A },
+    .{ 0x2039, 0x8B },
+    .{ 0x0152, 0x8C },
+    .{ 0x017D, 0x8E },
+    .{ 0x2018, 0x91 },
+    .{ 0x2019, 0x92 },
+    .{ 0x201C, 0x93 },
+    .{ 0x201D, 0x94 },
+    .{ 0x2022, 0x95 },
+    .{ 0x2013, 0x96 },
+    .{ 0x2014, 0x97 },
+    .{ 0x02DC, 0x98 },
+    .{ 0x2122, 0x99 },
+    .{ 0x0161, 0x9A },
+    .{ 0x203A, 0x9B },
+    .{ 0x0153, 0x9C },
+    .{ 0x017E, 0x9E },
+    .{ 0x0178, 0x9F },
+};
+
+test "windows-1252 conversion" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const out = try toCodepage(arena.allocator(), "Caf\u{e9} \u{2014} 5\u{20ac} \u{201c}x\u{201d} \u{2122}");
+    try std.testing.expectEqualSlices(u8, "Caf\xe9 \x97 5\x80 \x93x\x94 \x99", out);
+    try std.testing.expectError(error.NotRepresentable, toCodepage(arena.allocator(), "\u{2713}"));
+    try std.testing.expectError(error.NotRepresentable, toCodepage(arena.allocator(), "\u{65e5}"));
 }
 
 /// Encodes an MSI stream name. Pairs of characters from the set
