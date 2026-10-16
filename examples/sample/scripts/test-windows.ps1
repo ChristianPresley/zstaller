@@ -23,7 +23,10 @@ if ($InstallerDir) {
     Set-Location $InstallerDir
 } else {
     Set-Location (Join-Path $PSScriptRoot '..')
-    $signArg = if ($SignThumbprint) { @("-Dsign=$SignThumbprint") } else { @() }
+    # Assigned, not taken from an if expression: PowerShell would unroll a
+    # one-item array into a string, and @signArg would splat its characters.
+    $signArg = @()
+    if ($SignThumbprint) { $signArg = @("-Dsign=$SignThumbprint") }
     zig build installer --summary all @signArg
     if ($LASTEXITCODE -ne 0) { throw "zig build installer failed" }
     # Other versions of the sample, for the upgrade tests.
