@@ -73,10 +73,16 @@ pub fn isValidDebPackageName(name: []const u8) bool {
 
 /// Converts a semantic version to a Debian version. The pre-release
 /// separator '-' becomes '~' so that `1.0.0-rc.1` sorts before `1.0.0`.
+/// Any other '-' (as in `1.0.0-rc-1` or `1.0.0+build-5`) becomes '.':
+/// dpkg reads the last '-' as a Debian revision, which a native package
+/// must not have.
 pub fn debVersion(gpa: Allocator, version: []const u8) Allocator.Error![]u8 {
     const out = try gpa.dupe(u8, version);
     const plus = std.mem.indexOfScalar(u8, out, '+') orelse out.len;
-    if (std.mem.indexOfScalar(u8, out[0..plus], '-')) |i| out[i] = '~';
+    const pre = std.mem.indexOfScalar(u8, out[0..plus], '-');
+    for (out, 0..) |*c, i| {
+        if (c.* == '-') c.* = if (i == pre) '~' else '.';
+    }
     return out;
 }
 
@@ -138,9 +144,16 @@ test "debian names and versions" {
     try testing.expect(!isValidDebPackageName("a"));
     try testing.expect(!isValidDebPackageName("-app"));
     try testing.expect(!isValidDebPackageName("app_x"));
-    const v = try debVersion(testing.allocator, "2.0.0+git-abc");
-    defer testing.allocator.free(v);
-    try testing.expectEqualStrings("2.0.0+git-abc", v);
+    for ([_][2][]const u8{
+        .{ "2.0.0+git-abc", "2.0.0+git.abc" },
+        .{ "1.2.0-rc-1", "1.2.0~rc.1" },
+        .{ "1.2.0-3-gabc+x-y", "1.2.0~3.gabc+x.y" },
+        .{ "1.0.0-rc.1", "1.0.0~rc.1" },
+    }) |case| {
+        const v = try debVersion(testing.allocator, case[0]);
+        defer testing.allocator.free(v);
+        try testing.expectEqualStrings(case[1], v);
+    }
 }
 
 test "install paths" {

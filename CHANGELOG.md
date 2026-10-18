@@ -154,6 +154,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stop the entries of every later user from being removed. Such files
   are now skipped and left alone.
 
+- Per-user and per-machine MSIs of one product had the same product and
+  component codes, so Windows Installer could not have both installed as
+  the README says. Per-user builds now get their own codes; per-machine
+  codes are unchanged, so upgrades from earlier builds still match.
+
+- The MSI package code ignored pre-release and build metadata, so
+  `1.2.0`, `1.2.0-rc.1` and `1.2.0+abc` packages with the same files
+  shared a package code, which Windows Installer requires to be unique.
+
+- `.deb` versions with more than one `-` (`1.2.0-rc-1`, `git describe`
+  output such as `1.2.0-3-gabc`, or a `-` in build metadata) were read by
+  dpkg as having a Debian revision, which lintian rejects for a native
+  package. Every `-` other than the pre-release separator now becomes
+  `.`.
+
+- An extra file whose path is also another extra file's folder (`a` and
+  `a/b.txt`), or a `deb.files` path inside the application
+  (`/usr/bin/app/x`), built a broken package; on Windows an extra file in
+  a folder named like the application or `.zstaller-files` (the EXE's
+  file list) was accepted too. These now fail the `installer` step with
+  the option named, and a man page given both with and without `.gz` is
+  reported the same way instead of failing in the pack step.
+
+- A `.deb` without `license` in `build.zig.zon` silently had no copyright
+  file, and a `Maintainer` without an email (often `windows.publisher`
+  used as the default) was malformed; both fail lintian. Both are now
+  configuration errors naming the option to set.
+
+- With MCP registration on, zstaller inserted shell lines into a
+  `deb.scripts.prerm` written in another language (for example Python),
+  which then failed and blocked `apt remove`. It is now an error saying
+  `prerm` must be a shell script.
+
+- Hook arguments are checked against the MSI's 255-character limit as
+  stored, where each `[`, `]`, `{` or `}` takes four characters, instead
+  of failing later with a generic message.
+
 - An MSI upgrade that moved the application to another folder left the
   AI tool entries naming the old folder: the old package does not
   unregister during an upgrade, and the new one would not replace an

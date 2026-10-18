@@ -226,14 +226,14 @@ Ubuntu (`.deb = .{ ... }`):
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `maintainer` | `windows.publisher` | Debian `Maintainer` field, `Name <email>`. Required if `windows.publisher` is not set. |
+| `maintainer` | `windows.publisher` | Debian `Maintainer` field, `Name <email>`. Required unless `windows.publisher` is already in that form. |
 | `section`, `priority` | `utils`, `optional` | Debian control fields. |
 | `homepage`, `depends` | none | Debian control fields. Binaries are static, so `depends` is rarely needed. |
 | `long_description` | none | Paragraphs shown under the description by `apt show`. |
 | `copyright` | `windows.publisher` | The notice in the copyright file, with a year: `"2026 Example Corp"`. |
 | `files` | none | Files at absolute paths: `source`, `dest` (e.g. `/usr/share/man/man1/myapp.1`) and `mode` (default `0o644`). Files in `/etc` become configuration files. |
 | `desktop_entry` | none | A menu entry: `categories` (default `"Utility;"`), `terminal`, and a square PNG `icon`. |
-| `scripts` | none | Maintainer scripts `preinst`, `postinst`, `prerm`, `postrm`, each starting with `#!`. |
+| `scripts` | none | Maintainer scripts `preinst`, `postinst`, `prerm`, `postrm`, each starting with `#!`. With MCP registration on, `prerm` must be a shell script (zstaller adds lines to it). |
 
 Mistakes in the configuration (a missing description, an invalid package
 name, a bad GUID, an extra file path that would escape the install folder,
@@ -262,7 +262,8 @@ message naming the option; `zig build` and `zig build test` keep working.
 Installs the binary to `/usr/bin/<executable name>` (the `.name` your
 `executable` function gives it), `programs` next to it, extra files to
 `/usr/share/<package>/<dest>`, and a `copyright` file generated from the
-license in `/usr/share/doc/<package>/`. It also writes a
+license in `/usr/share/doc/<package>/` (so a `.deb` needs `license` in
+`build.zig.zon`, or that file in `deb.files`). It also writes a
 `changelog.gz` for the version and a lintian override for the statically
 linked binaries, so with `long_description` and `copyright` set, the
 sample passes `lintian` without warnings (CI checks it).

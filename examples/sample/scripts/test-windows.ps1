@@ -334,6 +334,19 @@ if (Test-Path per-user) {
     Assert-PerUserInstalled
     Invoke-Checked msiexec.exe "/x `"$puMsi`" /qn /l*v `"$PWD\msi-per-user-uninstall.log`""
     Assert-PerUserRemoved
+
+    Write-Host '== Per-machine and per-user MSIs install side by side'
+    # They are different products, so Windows Installer must not treat the
+    # second as the first already installed.
+    Invoke-Checked msiexec.exe "/i `"$msi`" /qn /l*v `"$PWD\msi-side-machine.log`""
+    Invoke-Checked msiexec.exe "/i `"$puMsi`" /qn /l*v `"$PWD\msi-side-user.log`""
+    if (-not (Test-Path $app)) { throw 'the per-machine MSI is not installed' }
+    if (-not (Test-Path (Join-Path $puDir 'sample.exe'))) { throw 'the per-user MSI did not install next to the per-machine one' }
+    Invoke-Checked msiexec.exe "/x `"$puMsi`" /qn"
+    Assert-PerUserRemoved
+    if (-not (Test-Path $app)) { throw 'removing the per-user MSI removed the per-machine one' }
+    Invoke-Checked msiexec.exe "/x `"$msi`" /qn"
+    Assert-Removed
 }
 
 function Get-Installer($version, $kind) {

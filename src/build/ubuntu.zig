@@ -40,10 +40,27 @@ fn addDeb(ctx: *const api.Context) ?LazyPath {
         ctx.fail("set .deb.maintainer (e.g. \"Jane Doe <jane@example.com>\") to build .deb packages", .{});
         return null;
     };
+    if (!isContact(maintainer)) {
+        ctx.fail("{s} '{s}' is used as the .deb Maintainer, which must be a name and an email address such as \"Jane Doe <jane@example.com>\"; set .deb.maintainer", .{
+            if (o.deb.maintainer != null) "deb.maintainer" else "windows.publisher",
+            maintainer,
+        });
+        return null;
+    }
     const pkg_name = naming.debPackageName(b.allocator, ctx.meta.name) catch @panic("OOM");
     if (!naming.isValidDebPackageName(pkg_name)) {
         ctx.fail("'{s}' cannot be used as a Debian package name", .{ctx.meta.name});
         return null;
+    }
+    if (ctx.meta.license == null) {
+        const copyright = b.fmt("/usr/share/doc/{s}/copyright", .{pkg_name});
+        const supplied = for (o.deb.files) |f| {
+            if (std.mem.eql(u8, f.dest, copyright)) break true;
+        } else false;
+        if (!supplied) {
+            ctx.fail("a license is required for .deb packages, which must have a copyright file; add .license to build.zig.zon or install {s} with deb.files", .{copyright});
+            return null;
+        }
     }
 
     const run = ctx.runPack("deb");
@@ -118,17 +135,25 @@ fn addLayout(ctx: *const api.Context, run: *std.Build.Step.Run, pkg_name: []cons
 
     var ok = true;
     for (o.deb.files, 0..) |f, i| {
+        // Manual pages are installed gzipped, under the name with .gz.
+        const installed = if (std.mem.startsWith(u8, f.dest, "/usr/share/man/") and !std.mem.endsWith(u8, f.dest, ".gz"))
+            b.fmt("{s}.gz", .{f.dest})
+        else
+            f.dest;
         if (debPathProblem(f.dest)) |problem| {
             ctx.fail("deb.files[{d}].dest '{s}' {s}", .{ i, f.dest, problem });
             ok = false;
-        } else if (taken.get(f.dest)) |what| {
-            ctx.fail("deb.files[{d}].dest '{s}' is where zstaller installs {s}", .{ i, f.dest, what });
+        } else if (taken.get(installed)) |what| {
+            ctx.fail("deb.files[{d}].dest '{s}' is where zstaller installs {s}", .{ i, installed, what });
+            ok = false;
+        } else if (folderClash(taken, installed)) |what| {
+            ctx.fail("deb.files[{d}].dest '{s}' is a file inside, or the folder of, {s}", .{ i, f.dest, what });
             ok = false;
         } else if (f.mode > 0o7777) {
             ctx.fail("deb.files[{d}].mode {o} is not a permission mode", .{ i, f.mode });
             ok = false;
         } else {
-            put(&taken, b.allocator, f.dest, b.fmt("deb.files[{d}]", .{i}));
+            put(&taken, b.allocator, installed, b.fmt("deb.files[{d}]", .{i}));
         }
     }
     if (!ok) return false;
@@ -179,6 +204,32 @@ fn addLayout(ctx: *const api.Context, run: *std.Build.Step.Run, pkg_name: []cons
         }
     }
     return true;
+}
+
+/// Whether `value` is a Debian contact: `Name <email>`.
+fn isContact(value: []const u8) bool {
+    const open = std.mem.lastIndexOfScalar(u8, value, '<') orelse return false;
+    if (open == 0 or value[value.len - 1] != '>') return false;
+    if (std.mem.trim(u8, value[0..open], " ").len == 0) return false;
+    const email = value[open + 1 .. value.len - 1];
+    const at = std.mem.indexOfScalar(u8, email, '@') orelse return false;
+    return at > 0 and at + 1 < email.len and std.mem.indexOfAny(u8, email, " <>") == null;
+}
+
+/// What in `taken` is a file in the folder `path`, or the file whose
+/// folder `path` would be, or null: a path cannot be both.
+fn folderClash(taken: std.StringHashMapUnmanaged([]const u8), path: []const u8) ?[]const u8 {
+    var it = taken.iterator();
+    while (it.next()) |e| {
+        const other = e.key_ptr.*;
+        const inside = struct {
+            fn inside(dir: []const u8, p: []const u8) bool {
+                return p.len > dir.len and p[dir.len] == '/' and std.mem.startsWith(u8, p, dir);
+            }
+        }.inside;
+        if (inside(path, other) or inside(other, path)) return e.value_ptr.*;
+    }
+    return null;
 }
 
 /// Why `path` cannot be an install path in a .deb, or null.

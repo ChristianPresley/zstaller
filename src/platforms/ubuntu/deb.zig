@@ -132,6 +132,8 @@ fn buildDataTar(gpa: Allocator, pkg: Package) Error![]u8 {
             try dirs.put(gpa, f.path[0..slash], {});
         }
     }
+    // A path cannot be both a file and the folder of another file.
+    for (pkg.files) |f| if (dirs.contains(f.path)) return error.InvalidPath;
     const dir_list = try gpa.dupe([]const u8, dirs.keys());
     defer gpa.free(dir_list);
     std.mem.sort([]const u8, dir_list, {}, lessThanStr);
@@ -252,8 +254,6 @@ pub fn changelogFile(gpa: Allocator, name: []const u8, version: []const u8, main
     });
 }
 
-/// Whether `path` is a manual page, which Debian policy wants compressed
-/// with gzip.
 /// The prerm script with lines that remove the package's MCP server
 /// registrations (`helper unregister --all-users`, see src/mcp/helper.zig)
 /// when the package is removed. They go right after the `#!` line of the
@@ -273,6 +273,29 @@ pub fn withPrermSnippet(gpa: Allocator, prerm: ?[]const u8, helper: []const u8) 
     return std.mem.concat(gpa, u8, &.{ script[0..nl], snippet, script[nl..] });
 }
 
+/// Whether `script` runs with a POSIX shell, so that shell lines can be
+/// added to it.
+pub fn isShellScript(script: []const u8) bool {
+    const line = script[0 .. std.mem.indexOfScalar(u8, script, '\n') orelse script.len];
+    if (!std.mem.startsWith(u8, line, "#!")) return false;
+    var words = std.mem.tokenizeAny(u8, line[2..], " \t\r");
+    var interpreter = words.next() orelse return false;
+    // `#!/usr/bin/env sh`
+    if (std.mem.eql(u8, std.fs.path.basename(interpreter), "env")) interpreter = words.next() orelse return false;
+    const name = std.fs.path.basename(interpreter);
+    for ([_][]const u8{ "sh", "bash", "dash" }) |shell| if (std.mem.eql(u8, name, shell)) return true;
+    return false;
+}
+
+test isShellScript {
+    try std.testing.expect(isShellScript("#!/bin/sh\nset -e\n"));
+    try std.testing.expect(isShellScript("#! /bin/bash -e\n"));
+    try std.testing.expect(isShellScript("#!/usr/bin/env dash"));
+    try std.testing.expect(!isShellScript("#!/usr/bin/python3\nprint(1)\n"));
+    try std.testing.expect(!isShellScript("#!/usr/bin/env perl\n"));
+    try std.testing.expect(!isShellScript("echo hi\n"));
+}
+
 test withPrermSnippet {
     const gpa = std.testing.allocator;
     const alone = try withPrermSnippet(gpa, null, "/usr/lib/app/zstaller-mcp");
@@ -285,6 +308,8 @@ test withPrermSnippet {
     try std.testing.expect(std.mem.endsWith(u8, theirs, "fi\necho bye\n"));
 }
 
+/// Whether `path` is a manual page, which Debian policy wants compressed
+/// with gzip.
 pub fn isUncompressedManPage(path: []const u8) bool {
     return std.mem.startsWith(u8, path, "/usr/share/man/") and !std.mem.endsWith(u8, path, ".gz");
 }
@@ -385,6 +410,8 @@ test "rejects bad paths and fields" {
     bad.files = &.{.{ .path = "/usr/../etc/passwd", .data = "" }};
     try testing.expectError(error.InvalidPath, write(testing.allocator, &out.writer, bad));
     bad.files = &.{ .{ .path = "/a/b", .data = "" }, .{ .path = "/a/b", .data = "" } };
+    try testing.expectError(error.InvalidPath, write(testing.allocator, &out.writer, bad));
+    bad.files = &.{ .{ .path = "/a/b", .data = "" }, .{ .path = "/a/b/c", .data = "" } };
     try testing.expectError(error.InvalidPath, write(testing.allocator, &out.writer, bad));
     bad = sample;
     bad.description = "two\nlines";

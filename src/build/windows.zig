@@ -122,8 +122,13 @@ fn hookCommand(ctx: *const api.Context, option: []const u8, command: ?api.Instal
         return error.Reported;
     }
     const args = cli.joinArgs(ctx.b.allocator, c.args) catch @panic("OOM");
-    if (args.len > 255) {
-        ctx.fail("windows.{s}.args are {d} characters long; the MSI allows 255", .{ option, args.len });
+    // The MSI stores them escaped: each [ ] { } takes 4 characters.
+    var stored = args.len;
+    for (args) |ch| if (std.mem.indexOfScalar(u8, "[]{}", ch) != null) {
+        stored += 3;
+    };
+    if (stored > 255) {
+        ctx.fail("windows.{s}.args take {d} characters in the MSI (each [ ] {{ }} counts as 4); the MSI allows 255", .{ option, stored });
         return error.Reported;
     }
     return .{ .program = c.program, .args = args };

@@ -250,8 +250,8 @@ pub const McpClients = struct {
 
 pub const DebOptions = struct {
     /// `Maintainer` field, e.g. `Jane Doe <jane@example.com>`. Required
-    /// for .deb output unless `windows.publisher` is set, which is then
-    /// used instead.
+    /// for .deb output unless `windows.publisher` is set in that same
+    /// `Name <email>` form, which is then used instead.
     maintainer: ?[]const u8 = null,
     /// `Section` field, e.g. `utils`, `devel`, `net`.
     section: []const u8 = "utils",
@@ -761,11 +761,15 @@ fn programsFit(ctx: *const Context) bool {
         }
     }
     for (opts.extra_files, 0..) |f, i| {
-        var clash = std.ascii.eqlIgnoreCase(f.dest, ctx.binary.out_filename) or
-            (windows and std.ascii.eqlIgnoreCase(f.dest, "uninstall.exe")) or (windows and isHelperName(ctx, f.dest));
-        for (ctx.programs) |p| clash = clash or (windows and std.ascii.eqlIgnoreCase(f.dest, p.name));
+        // On Windows everything shares the install folder, so a folder
+        // named like one of those files clashes too.
+        const top = if (windows) f.dest[0 .. std.mem.indexOfScalar(u8, f.dest, '/') orelse f.dest.len] else f.dest;
+        var clash = std.ascii.eqlIgnoreCase(top, ctx.binary.out_filename) or
+            (windows and (std.ascii.eqlIgnoreCase(top, "uninstall.exe") or std.ascii.eqlIgnoreCase(top, ".zstaller-files"))) or
+            (windows and isHelperName(ctx, top));
+        for (ctx.programs) |p| clash = clash or (windows and std.ascii.eqlIgnoreCase(top, p.name));
         if (clash) {
-            ctx.fail("extra_files[{d}].dest '{s}' is the name of a file the installer writes itself", .{ i, f.dest });
+            ctx.fail("extra_files[{d}].dest '{s}' is, or is in a folder named like, a file the installer writes itself", .{ i, f.dest });
             ok = false;
         }
     }
@@ -832,6 +836,13 @@ fn extraFileProblem(files: []const ExtraFile, i: usize) ?[]const u8 {
     if (naming.installPathProblem(files[i].dest)) |problem| return problem;
     for (files[0..i]) |earlier| {
         if (std.ascii.eqlIgnoreCase(earlier.dest, files[i].dest)) return "is used by more than one extra file";
+        if (isFolderOf(earlier.dest, files[i].dest) or isFolderOf(files[i].dest, earlier.dest))
+            return "is a file and also the folder of another extra file";
     }
     return null;
+}
+
+/// Whether `path` is inside the folder `dir` (both relative, with `/`).
+fn isFolderOf(dir: []const u8, path: []const u8) bool {
+    return path.len > dir.len and path[dir.len] == '/' and std.ascii.eqlIgnoreCase(path[0..dir.len], dir);
 }

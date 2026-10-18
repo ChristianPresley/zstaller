@@ -245,10 +245,15 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
     const upgrade_str = uuid.format(upgrade);
     const platform = @tagName(p.platform);
     const release = if (p.release.len > 0) p.release else p.version;
-    const product_code = uuid.format(uuid.v5Parts(upgrade, &.{ "product", release, platform }));
+    // A per-user and a per-machine build are different products, which
+    // Windows Installer lets one machine have both of: they need their own
+    // product and component codes. (Per machine keeps the codes it always
+    // had, so upgrades from earlier versions still match.)
+    const guid_platform = if (p.per_user) try std.fmt.allocPrint(a, "{s}/per-user", .{platform}) else platform;
+    const product_code = uuid.format(uuid.v5Parts(upgrade, &.{ "product", release, guid_platform }));
     const package_code = blk: {
         var h = std.crypto.hash.sha2.Sha256.init(.{});
-        for ([_][]const u8{ p.name, p.version, p.manufacturer, p.description, p.install_dir, @tagName(p.install_root), @tagName(p.add_to_path), platform }) |s| {
+        for ([_][]const u8{ p.name, p.version, release, p.manufacturer, p.description, p.install_dir, @tagName(p.install_root), @tagName(p.add_to_path), platform }) |s| {
             h.update(s);
             h.update(&.{0});
         }
@@ -426,7 +431,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
         const dir_rel = std.fs.path.dirnamePosix(f.path) orelse "";
         const base = std.fs.path.basenamePosix(f.path);
         const dir_id = dir_ids.get(dir_rel).?;
-        const comp_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", platform, f.path }));
+        const comp_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", guid_platform, f.path }));
         try db.addRow(component, &.{ .{ .str = comp_key }, .{ .str = try a.dupe(u8, &comp_guid) }, .{ .str = dir_id }, .{ .int = component_64bit }, .null, .{ .str = file_key } });
         try db.addRow(file_table, &.{
             .{ .str = file_key },
@@ -509,7 +514,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             n += 1;
         }
         if (sc.desktop != .never) {
-            const desktop_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", platform, "DesktopShortcut" }));
+            const desktop_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", guid_platform, "DesktopShortcut" }));
             try db.addRow(component, &.{
                 .{ .str = "CDesktop" },
                 .{ .str = try a.dupe(u8, &desktop_guid) },
@@ -577,7 +582,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             .{ .name = "Value", .type = T.str(255) | T.localizable | T.nullable },
             .{ .name = "Component_", .type = T.str(72) },
         });
-        const path_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", platform, "PATH" }));
+        const path_guid = uuid.format(uuid.v5Parts(upgrade, &.{ "component", guid_platform, "PATH" }));
         try db.addRow(component, &.{
             .{ .str = "CPath" },
             .{ .str = try a.dupe(u8, &path_guid) },
@@ -1192,4 +1197,60 @@ test "per-user package" {
         for (c.has) |text| try testing.expect(std.mem.indexOf(u8, r.stdout, text) != null);
         for (c.lacks) |text| try testing.expect(std.mem.indexOf(u8, r.stdout, text) == null);
     }
+}
+
+test "per-user builds and pre-releases get their own codes (skipped when msiinfo is missing)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base: Product = .{
+        .name = "Demo",
+        .version = "1.0.0",
+        .manufacturer = "Example",
+        .description = "A demo",
+        .upgrade_code = "{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}",
+        .platform = .x64,
+        .install_dir = "Demo",
+        .files = &.{.{ .path = "demo.exe", .data = "MZ" }},
+    };
+    var per_user = base;
+    per_user.per_user = true;
+    var rc = base;
+    rc.release = "1.0.0-rc.1";
+    // The product code and the component of demo.exe, then the package
+    // code, of each build.
+    var found: [3][3][]u8 = undefined;
+    defer for (&found) |*f| for (f) |s| gpa.free(s);
+    for ([_]Product{ base, per_user, rc }, 0..) |p, i| {
+        var out: Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try write(gpa, &out.writer, p);
+        try tmp.dir.writeFile(io, .{ .sub_path = "demo.msi", .data = out.written() });
+        const path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/demo.msi", .{tmp.sub_path});
+        defer gpa.free(path);
+        for ([_][]const []const u8{
+            &.{ "msiinfo", "export", path, "Property" },
+            &.{ "msiinfo", "export", path, "Component" },
+            &.{ "msiinfo", "suminfo", path },
+        }, [_][]const u8{ "ProductCode\t", "\t{", "Revision number (UUID): " }, 0..) |argv, marker, j| {
+            const r = std.process.run(gpa, io, .{ .argv = argv }) catch |err| switch (err) {
+                error.FileNotFound => return error.SkipZigTest,
+                else => |e| return e,
+            };
+            defer gpa.free(r.stdout);
+            defer gpa.free(r.stderr);
+            const at = (std.mem.indexOf(u8, r.stdout, marker) orelse return error.TestUnexpectedResult) + marker.len;
+            const start = if (r.stdout[at - 1] == '{') at - 1 else at;
+            found[i][j] = try gpa.dupe(u8, r.stdout[start..][0..38]);
+        }
+    }
+    for (0..3) |j| {
+        try testing.expect(!std.mem.eql(u8, found[0][j], found[1][j]));
+    }
+    try testing.expect(!std.mem.eql(u8, found[0][0], found[2][0]));
+    try testing.expect(!std.mem.eql(u8, found[0][2], found[2][2]));
+    // Same files, same component codes: an rc and its release are one
+    // product line.
+    try testing.expectEqualStrings(found[0][1], found[2][1]);
 }

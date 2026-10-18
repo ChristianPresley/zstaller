@@ -214,6 +214,8 @@ fn cmdDeb(ctx: Ctx, args: []const []const u8) !void {
         }
     }
     if (o.get("mcp-helper")) |helper| {
+        if (scripts.prerm) |text| if (!zstaller.deb.isShellScript(text))
+            fail("deb.scripts.prerm: '{s}' must be a shell script (#!/bin/sh, bash or dash) when mcp.register is on, because zstaller adds shell lines to it that remove the MCP registrations", .{o.get("prerm").?});
         scripts.prerm = zstaller.deb.withPrermSnippet(ctx.arena, scripts.prerm, helper) catch oom();
     }
 
