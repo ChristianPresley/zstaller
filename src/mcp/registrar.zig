@@ -21,8 +21,11 @@
 //! An entry is ours when its `command` is the installed program. Only our
 //! entries are replaced or removed, so a server the user set up under the
 //! same name is left alone. Files are changed in place (see jsonc.zig),
-//! written to a temporary file and renamed over the original, with the
-//! previous version kept as `<file>.zstaller.bak`.
+//! written to a temporary file and renamed over the original. Registering
+//! keeps the previous version as `<file>.zstaller.bak`; unregistering
+//! removes that backup, the object that held the entry if nothing else is
+//! left in it, and the file itself if it is then empty, so an uninstall
+//! leaves the user's files as they were.
 
 const std = @import("std");
 pub const jsonc = @import("jsonc.zig");
@@ -246,7 +249,11 @@ pub fn unregisterText(gpa: Allocator, text: []const u8, client: Client, server: 
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .keep = .unreadable },
     }) orelse return .{ .keep = .absent };
-    return .{ .write = new };
+    // The object that held it goes too once it is empty: installing may
+    // have been what added it.
+    const tidy = (jsonc.removeEmpty(gpa, new, key) catch null) orelse return .{ .write = new };
+    gpa.free(new);
+    return .{ .write = tidy };
 }
 
 pub const Operation = enum { register, unregister };
@@ -304,16 +311,29 @@ pub fn apply(io: Io, gpa: Allocator, op: Operation, client: Client, server: Serv
     const base = std.fs.path.basename(path);
     var dir = try cwd.openDir(io, dir_path, .{});
     defer dir.close(io);
-    if (stat != null) {
-        const bak = try std.fmt.allocPrint(gpa, "{s}.zstaller.bak", .{base});
-        defer gpa.free(bak);
-        try writeReplacing(io, dir, bak, text, stat, path, fixup);
+    const bak = try std.fmt.allocPrint(gpa, "{s}.zstaller.bak", .{base});
+    defer gpa.free(bak);
+    switch (op) {
+        .register => {
+            if (stat != null) try writeReplacing(io, dir, bak, text, stat, path, fixup);
+            try writeReplacing(io, dir, base, new, stat, path, fixup);
+            return .registered;
+        },
+        .unregister => {
+            // A file with nothing left in it is one installing created
+            // (or an empty one, which the client treats the same as none).
+            // A link is left in place, pointing at an empty object.
+            if (jsonc.isEmptyObject(new) and (try cwd.statFile(io, loc.file, .{ .follow_symlinks = false })).kind != .sym_link)
+                try dir.deleteFile(io, base)
+            else
+                try writeReplacing(io, dir, base, new, stat, path, fixup);
+            dir.deleteFile(io, bak) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => |e| return e,
+            };
+            return .removed;
+        },
     }
-    try writeReplacing(io, dir, base, new, stat, path, fixup);
-    return switch (op) {
-        .register => .registered,
-        .unregister => .removed,
-    };
 }
 
 /// Writes `data` to `name` in `dir` through a temporary file, with the
@@ -408,7 +428,7 @@ test "locations" {
     try testing.expectEqualStrings("/home/a/.claude", c.marker);
 }
 
-test "apply registers and unregisters in files, keeping a backup" {
+test "apply registers and unregisters in files, leaving them as they were" {
     const io = testing.io;
     const a = testing.allocator;
     var tmp = testing.tmpDir(.{});
@@ -433,19 +453,23 @@ test "apply registers and unregisters in files, keeping a backup" {
     defer a.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "\"app\": {\"type\":\"stdio\",\"command\":\"/usr/bin/app\",\"args\":[]}") != null);
 
-    try testing.expectEqual(Outcome.removed, try apply(io, a, .unregister, .claude_code, server, .linux, p, null));
-    try testing.expectEqual(Outcome.absent, try apply(io, a, .unregister, .claude_code, server, .linux, p, null));
-    const back = try tmp.dir.readFileAlloc(io, ".claude.json", a, .unlimited);
-    defer a.free(back);
-    try testing.expectEqualStrings("{\n  \"mcpServers\": {\n  },\n  \"numStartups\": 3\n}\n", back);
     const bak = try tmp.dir.readFileAlloc(io, ".claude.json.zstaller.bak", a, .unlimited);
     defer a.free(bak);
-    try testing.expect(std.mem.indexOf(u8, bak, "/usr/bin/app") != null);
+    try testing.expectEqualStrings("{\n  \"numStartups\": 3\n}\n", bak);
     // A private file stays private, and so does its backup.
     if (private) for ([_][]const u8{ ".claude.json", ".claude.json.zstaller.bak" }) |name| {
         const st = try tmp.dir.statFile(io, name, .{});
         try testing.expectEqual(@as(std.posix.mode_t, 0o600), st.permissions.toMode() & 0o777);
     };
+
+    // Unregistering puts the file back as it was and drops the backup.
+    try testing.expectEqual(Outcome.removed, try apply(io, a, .unregister, .claude_code, server, .linux, p, null));
+    try testing.expectEqual(Outcome.absent, try apply(io, a, .unregister, .claude_code, server, .linux, p, null));
+    const back = try tmp.dir.readFileAlloc(io, ".claude.json", a, .unlimited);
+    defer a.free(back);
+    try testing.expectEqualStrings("{\n  \"numStartups\": 3\n}\n", back);
+    try testing.expectError(error.FileNotFound, tmp.dir.access(io, ".claude.json.zstaller.bak", .{}));
+    if (private) try testing.expectEqual(@as(std.posix.mode_t, 0o600), (try tmp.dir.statFile(io, ".claude.json", .{})).permissions.toMode() & 0o777);
 
     // A new file only goes into a folder the client already has.
     try tmp.dir.createDirPath(io, ".cursor");
@@ -453,4 +477,8 @@ test "apply registers and unregisters in files, keeping a backup" {
     const cursor = try tmp.dir.readFileAlloc(io, ".cursor/mcp.json", a, .unlimited);
     defer a.free(cursor);
     try testing.expectEqualStrings("{\n  \"mcpServers\": {\n    \"app\": {\"command\":\"/usr/bin/app\",\"args\":[]}\n  }\n}\n", cursor);
+    // ...and goes again on unregister, as there is nothing else in it.
+    try testing.expectEqual(Outcome.removed, try apply(io, a, .unregister, .cursor, server, .linux, p, null));
+    try testing.expectError(error.FileNotFound, tmp.dir.access(io, ".cursor/mcp.json", .{}));
+    try tmp.dir.access(io, ".cursor", .{});
 }

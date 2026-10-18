@@ -286,7 +286,27 @@ pub fn set(gpa: Allocator, text: []const u8, container_key: []const u8, name: []
 pub fn remove(gpa: Allocator, text: []const u8, container_key: []const u8, name: []const u8) Error!?[]u8 {
     if (isBlank(text)) return null;
     const f = try find(text, container_key, name);
-    const e = f.entry orelse return null;
+    return try removeMember(gpa, text, f.entry orelse return null);
+}
+
+/// `text` without the member `container_key` when it holds an empty
+/// object (no entries, no comments), or null when there is no such member.
+pub fn removeEmpty(gpa: Allocator, text: []const u8, container_key: []const u8) Error!?[]u8 {
+    if (isBlank(text)) return null;
+    const f = try find(text, container_key, "");
+    const obj = f.container_obj orelse return null;
+    if (obj.members > 0 or !isBlank(text[obj.open + 1 .. obj.close])) return null;
+    return try removeMember(gpa, text, f.container.?);
+}
+
+/// Whether `text` is an object with nothing in it, as a file left once
+/// its last member is removed.
+pub fn isEmptyObject(text: []const u8) bool {
+    const t = std.mem.trim(u8, if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text[3..] else text, " \t\r\n");
+    return t.len >= 2 and t[0] == '{' and t[t.len - 1] == '}' and isBlank(t[1 .. t.len - 1]);
+}
+
+fn removeMember(gpa: Allocator, text: []const u8, e: Member) Allocator.Error![]u8 {
     var start = e.start;
     var end = e.value_end;
     if (e.comma_after) |c| {
@@ -496,6 +516,37 @@ test "remove takes the entry and its line" {
     try expectRemove("{\"mcpServers\":{\"a\":1}}", null);
     try expectRemove("{\"other\":{\"app\":1}}", null);
     try expectRemove("", null);
+}
+
+fn expectRemoveEmpty(before: []const u8, after: ?[]const u8) !void {
+    const out = try removeEmpty(testing.allocator, before, "mcpServers");
+    defer if (out) |o| testing.allocator.free(o);
+    if (after) |a| try testing.expectEqualStrings(a, out.?) else try testing.expect(out == null);
+}
+
+test "an emptied container is removed, a kept one is not" {
+    try expectRemoveEmpty(
+        \\{
+        \\  "numStartups": 3,
+        \\  "mcpServers": {
+        \\  },
+        \\  "theme": "dark"
+        \\}
+    ,
+        \\{
+        \\  "numStartups": 3,
+        \\  "theme": "dark"
+        \\}
+    );
+    try expectRemoveEmpty("{\"a\":1,\"mcpServers\":{}}", "{\"a\":1}");
+    try expectRemoveEmpty("{\n  \"mcpServers\": {}\n}\n", "{\n}\n");
+    // Entries, or a comment the user left in it, keep it.
+    try expectRemoveEmpty("{\"mcpServers\":{\"other\":{}}}", null);
+    try expectRemoveEmpty("{\"mcpServers\":{ // mine\n}}", null);
+    try expectRemoveEmpty("{\"other\":{}}", null);
+    try testing.expect(isEmptyObject("\xEF\xBB\xBF{\n}\n"));
+    try testing.expect(!isEmptyObject("{ // keep\n}"));
+    try testing.expect(!isEmptyObject("{\"a\":1}"));
 }
 
 test "get finds only the entry in the right object" {

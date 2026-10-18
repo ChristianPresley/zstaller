@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Uninstalling left traces in the AI tools' files: an empty
+  `"mcpServers": {}` (or `"servers": {}`), a whole file the installer had
+  created, such as VS Code's `mcp.json`, and the `.zstaller.bak` backups.
+  `zstaller-mcp unregister` now removes the backup, the emptied object
+  and a file with nothing left in it, so the files end up as they were.
 - `zstaller-mcp` crashed on an AI tool file nested hundreds of thousands
   of levels deep instead of reporting it as invalid, and opening a pipe
   left at a tool's file path made it hang. During `unregister

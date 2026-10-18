@@ -158,6 +158,8 @@ function Assert-Shortcut {
 # ~/.claude exists.
 $claudeJson = Join-Path $HOME '.claude.json'
 New-Item -ItemType Directory -Force (Join-Path $HOME '.claude') | Out-Null
+$claudeJsonExisted = Test-Path $claudeJson
+$claudeBakExisted = Test-Path "$claudeJson.zstaller.bak"
 
 function Test-McpRegistered {
     if (-not (Test-Path $claudeJson)) { return $false }
@@ -171,6 +173,9 @@ function Assert-McpRegistered($expected) {
     if ((Test-McpRegistered) -ne $expected) {
         throw "MCP server registered in ${claudeJson}: $(Test-McpRegistered), expected ${expected}: $(Get-Content $claudeJson -Raw -ErrorAction SilentlyContinue)"
     }
+    # Unregistering leaves no trace: no backup, and no file it created.
+    if (-not $expected -and -not $claudeBakExisted -and (Test-Path "$claudeJson.zstaller.bak")) { throw "unregistering left $claudeJson.zstaller.bak" }
+    if (-not $expected -and -not $claudeJsonExisted -and (Test-Path $claudeJson)) { throw "unregistering left the $claudeJson it created: $(Get-Content $claudeJson -Raw)" }
     Write-Host "MCP registration OK: $expected"
 }
 

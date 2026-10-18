@@ -102,6 +102,8 @@ mcp_user=zstaller-mcp-test
 sudo useradd --create-home "$mcp_user"
 mcp_home="$(getent passwd "$mcp_user" | cut -d: -f6)"
 sudo -u "$mcp_user" mkdir "$mcp_home/.claude"
+# VS Code is "installed" but has no mcp.json yet: registering creates it.
+sudo -u "$mcp_user" mkdir -p "$mcp_home/.config/Code/User"
 printf '{\n  "numStartups": 1\n}\n' | sudo -u "$mcp_user" tee "$mcp_home/.claude.json" >/dev/null
 sudo -u "$mcp_user" chmod 600 "$mcp_home/.claude.json"
 # Another user's settings folder passed through the environment (as sudo
@@ -114,13 +116,18 @@ if [ -e "$other_config/Code/User/mcp.json" ]; then echo "registering wrote to an
 rm -rf "$other_config"
 sudo grep -q '"zstaller-sample": {"type":"stdio","command":"/usr/bin/sample-tool","args":\["mcp"\]}' "$mcp_home/.claude.json"
 sudo -u "$mcp_user" env HOME="$mcp_home" /usr/lib/sample/zstaller-mcp status | grep -q 'Claude Code: registered'
+sudo test -f "$mcp_home/.config/Code/User/mcp.json"
 
 echo "== purge"
 sudo dpkg --purge sample
 if command -v sample >/dev/null || command -v sample-tool >/dev/null; then echo "sample still installed"; exit 1; fi
 if [ -e /etc/sample ] || [ -e /var/lib/sample ]; then echo "purge left /etc/sample or /var/lib/sample"; exit 1; fi
 if sudo grep -q zstaller-sample "$mcp_home/.claude.json"; then echo "removing the package left the MCP registration"; exit 1; fi
-sudo grep -q '"numStartups": 1' "$mcp_home/.claude.json"
+# Uninstalling leaves the user's files exactly as they were: no emptied
+# "mcpServers", no backups, and no mcp.json that installing created.
+test "$(sudo cat "$mcp_home/.claude.json")" = "$(printf '{\n  "numStartups": 1\n}')"
+if sudo find "$mcp_home" -name '*.zstaller.bak' | grep -q .; then echo "removing the package left backups"; exit 1; fi
+if sudo test -e "$mcp_home/.config/Code/User/mcp.json"; then echo "removing the package left the mcp.json it created"; exit 1; fi
 test "$(sudo stat -c '%U %a' "$mcp_home/.claude.json")" = "$mcp_user 600"
 sudo userdel --remove "$mcp_user" 2>/dev/null || true
 echo "Linux end-to-end test passed"

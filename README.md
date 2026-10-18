@@ -514,7 +514,10 @@ PATH entry controlled by the `ADDTOPATH` property (default 1) and, with
 `DESKTOPSHORTCUT` (default 0). It installs to the same default folder as
 the EXE, and locks the install folder down the same way (only SYSTEM and
 administrators may change it), along with the folders of a nested
-`install_dir_name` outside Program Files. The MSI shows Windows Installer's basic progress UI, not the
+`install_dir_name` outside Program Files. Its PATH entry ends in a
+backslash (`C:\Program Files\MyApp\`), as Windows Installer writes
+folder paths and as other MSIs such as Node.js's do; Windows treats it
+the same as the EXE's entry without one. The MSI shows Windows Installer's basic progress UI, not the
 EXE's wizard.
 
 ```bat
@@ -620,8 +623,11 @@ or removed: a server the user set up under the same name is left alone
 and reported. The files are edited in place, so comments and formatting
 in them (VS Code allows comments) stay as they were. Each change is
 written to a temporary file that replaces the original, with its
-permissions, and the previous version is kept as `<file>.zstaller.bak`.
-A tool that is running may need a restart to see the change.
+permissions, and registering keeps the previous version as
+`<file>.zstaller.bak`. Unregistering removes that backup, the
+`mcpServers` (or `servers`) object if nothing else is left in it, and
+the file if it is then empty, so uninstalling leaves the files as they
+were before. A tool that is running may need a restart to see the change.
 
 `env` values end up in plain-text files, so never put secrets in them.
 The sample's `sample-tool mcp` is a small working server with one tool.
