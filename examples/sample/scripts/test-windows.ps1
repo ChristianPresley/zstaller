@@ -408,7 +408,7 @@ Write-Host '== MSI: an upgrade that moves the folder re-registers the MCP server
 # The old package does not unregister during an upgrade, so the entry
 # naming its folder must be recognised as left behind and replaced.
 $msiOld = Join-Path $env:SystemDrive 'zstaller test\MSI Old'
-Invoke-Checked msiexec.exe "/i `"$msi`" /qn `"INSTALLDIR=$msiOld`""
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn INSTALLDIR=`"$msiOld`" /l*v `"$PWD\msi-move-old.log`""
 Assert-McpRegistered $true
 Invoke-Checked msiexec.exe "/i `"$msi101`" /qn /l*v `"$PWD\msi-move.log`""
 if (Test-Path (Join-Path $msiOld 'sample.exe')) { throw "the upgrade left $msiOld behind" }
