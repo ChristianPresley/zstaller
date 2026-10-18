@@ -155,6 +155,36 @@ pub fn isOurs(gpa: Allocator, value: []const u8, command: []const u8, os: Os) bo
     return samePath(cmd.string, command, os);
 }
 
+/// Whether the entry under our name in `text` was left behind by an
+/// earlier installation of ours in another folder: it runs a program with
+/// our program's file name, at an absolute path where nothing is any more.
+/// That happens when an MSI upgrade moves the application (the old
+/// package's uninstall does not unregister during an upgrade) or a folder
+/// is deleted by hand. Such an entry is replaced on register and removed
+/// on unregister instead of being reported as another server's.
+pub fn leftBehind(io: Io, gpa: Allocator, text: []const u8, client: Client, server: Server, os: Os) bool {
+    const existing = (jsonc.get(text, client.containerKey(), server.name) catch return false) orelse return false;
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, existing, .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const cmd = parsed.value.object.get("command") orelse return false;
+    if (cmd != .string) return false;
+    if (samePath(cmd.string, server.command, os)) return false;
+    if (!sameProgramName(cmd.string, server.command, os)) return false;
+    if (!std.fs.path.isAbsolute(cmd.string)) return false;
+    Io.Dir.cwd().access(io, cmd.string, .{}) catch |err| return err == error.FileNotFound;
+    return false;
+}
+
+/// Whether two program paths end in the same file name.
+fn sameProgramName(a: []const u8, b: []const u8, os: Os) bool {
+    const seps: []const u8 = if (os == .windows) "/\\" else "/";
+    const name_a = a[if (std.mem.lastIndexOfAny(u8, a, seps)) |i| i + 1 else 0..];
+    const name_b = b[if (std.mem.lastIndexOfAny(u8, b, seps)) |i| i + 1 else 0..];
+    if (os == .windows) return std.ascii.eqlIgnoreCase(name_a, name_b);
+    return std.mem.eql(u8, name_a, name_b);
+}
+
 fn samePath(a: []const u8, b: []const u8, os: Os) bool {
     if (os == .linux) return std.mem.eql(u8, a, b);
     if (a.len != b.len) return false;
@@ -188,13 +218,15 @@ pub const Outcome = enum {
 
 /// The new text for registering, or null with the reason to leave the
 /// file as it is.
-pub fn registerText(gpa: Allocator, text: []const u8, client: Client, server: Server, os: Os) Allocator.Error!Change {
+/// `left_behind` says the entry under our name, if not ours, is one an
+/// earlier installation left behind (`leftBehind`) and may be replaced.
+pub fn registerText(gpa: Allocator, text: []const u8, client: Client, server: Server, os: Os, left_behind: bool) Allocator.Error!Change {
     const value = try entry(gpa, client, server);
     defer gpa.free(value);
     const key = client.containerKey();
     const existing = jsonc.get(text, key, server.name) catch return .{ .keep = .unreadable };
     if (existing) |old| {
-        if (!isOurs(gpa, old, server.command, os)) return .{ .keep = .name_taken };
+        if (!left_behind and !isOurs(gpa, old, server.command, os)) return .{ .keep = .name_taken };
         if (std.mem.eql(u8, old, value)) return .{ .keep = .unchanged };
     }
     const new = jsonc.set(gpa, text, key, server.name, value) catch |err| switch (err) {
@@ -205,11 +237,11 @@ pub fn registerText(gpa: Allocator, text: []const u8, client: Client, server: Se
 }
 
 /// The new text for unregistering, or null with the reason to leave the
-/// file as it is.
-pub fn unregisterText(gpa: Allocator, text: []const u8, client: Client, server: Server, os: Os) Allocator.Error!Change {
+/// file as it is. `left_behind` is as for `registerText`.
+pub fn unregisterText(gpa: Allocator, text: []const u8, client: Client, server: Server, os: Os, left_behind: bool) Allocator.Error!Change {
     const key = client.containerKey();
     const existing = (jsonc.get(text, key, server.name) catch return .{ .keep = .unreadable }) orelse return .{ .keep = .absent };
-    if (!isOurs(gpa, existing, server.command, os)) return .{ .keep = .absent };
+    if (!left_behind and !isOurs(gpa, existing, server.command, os)) return .{ .keep = .absent };
     const new = (jsonc.remove(gpa, text, key, server.name) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .keep = .unreadable },
@@ -240,6 +272,10 @@ pub fn apply(io: Io, gpa: Allocator, op: Operation, client: Client, server: Serv
 
     var stat: ?Io.File.Stat = null;
     const text: []u8 = if (real != null) blk: {
+        // Only a regular file is read: opening a pipe or a device left at
+        // the path would block or never end, and `unregister --all-users`
+        // goes through every user's profile.
+        if ((try cwd.statFile(io, path, .{})).kind != .file) return .unreadable;
         const f = try cwd.openFile(io, path, .{});
         defer f.close(io);
         stat = try f.stat(io);
@@ -253,9 +289,10 @@ pub fn apply(io: Io, gpa: Allocator, op: Operation, client: Client, server: Serv
     };
     defer gpa.free(text);
 
+    const left_behind = leftBehind(io, gpa, text, client, server, os);
     const result = switch (op) {
-        .register => try registerText(gpa, text, client, server, os),
-        .unregister => try unregisterText(gpa, text, client, server, os),
+        .register => try registerText(gpa, text, client, server, os, left_behind),
+        .unregister => try unregisterText(gpa, text, client, server, os, left_behind),
     };
     const new = switch (result) {
         .keep => |o| return o,
@@ -316,32 +353,46 @@ test "entries per client" {
 
 test "register adds, updates ours and leaves others alone" {
     const a = testing.allocator;
-    const added = (try registerText(a, "{}", .claude_code, test_server, .windows)).write;
+    const added = (try registerText(a, "{}", .claude_code, test_server, .windows, false)).write;
     defer a.free(added);
     try testing.expect(std.mem.indexOf(u8, added, "\"app\": {\"type\":\"stdio\"") != null);
-    try testing.expectEqual(Outcome.unchanged, (try registerText(a, added, .claude_code, test_server, .windows)).keep);
+    try testing.expectEqual(Outcome.unchanged, (try registerText(a, added, .claude_code, test_server, .windows, false)).keep);
 
     // An older entry of ours (different args) is updated, matching the
     // path as Windows does.
     const old = "{\"mcpServers\":{\"app\":{\"command\":\"c:/program files/app/APP.exe\",\"args\":[]}}}";
-    const updated = (try registerText(a, old, .claude_code, test_server, .windows)).write;
+    const updated = (try registerText(a, old, .claude_code, test_server, .windows, false)).write;
     defer a.free(updated);
     try testing.expect(std.mem.indexOf(u8, updated, "\"args\":[\"mcp\"]") != null);
 
     const theirs = "{\"mcpServers\":{\"app\":{\"command\":\"D:\\\\dev\\\\app.exe\"}}}";
-    try testing.expectEqual(Outcome.name_taken, (try registerText(a, theirs, .claude_code, test_server, .windows)).keep);
-    try testing.expectEqual(Outcome.unreadable, (try registerText(a, "{oops", .claude_code, test_server, .windows)).keep);
+    try testing.expectEqual(Outcome.name_taken, (try registerText(a, theirs, .claude_code, test_server, .windows, false)).keep);
+    try testing.expectEqual(Outcome.unreadable, (try registerText(a, "{oops", .claude_code, test_server, .windows, false)).keep);
+
+    // One an earlier installation left behind is replaced.
+    const moved = (try registerText(a, theirs, .claude_code, test_server, .windows, true)).write;
+    defer a.free(moved);
+    try testing.expect(std.mem.indexOf(u8, moved, "Program Files") != null);
+    try testing.expect(std.mem.indexOf(u8, moved, "D:\\\\dev") == null);
+}
+
+test "left behind entries run a program of the same name" {
+    try testing.expect(sameProgramName("D:\\old\\App.exe", "C:\\Program Files\\App\\app.exe", .windows));
+    try testing.expect(sameProgramName("D:/old/app.exe", "C:\\Program Files\\App\\app.exe", .windows));
+    try testing.expect(!sameProgramName("D:\\old\\other.exe", "C:\\Program Files\\App\\app.exe", .windows));
+    try testing.expect(!sameProgramName("/opt/App", "/usr/bin/app", .linux));
+    try testing.expect(sameProgramName("/opt/old/app", "/usr/bin/app", .linux));
 }
 
 test "unregister removes only ours" {
     const a = testing.allocator;
     const ours = "{\"servers\":{\"app\":{\"type\":\"stdio\",\"command\":\"C:\\\\Program Files\\\\App\\\\app.exe\"},\"x\":{}}}";
-    const removed = (try unregisterText(a, ours, .vscode, test_server, .windows)).write;
+    const removed = (try unregisterText(a, ours, .vscode, test_server, .windows, false)).write;
     defer a.free(removed);
     try testing.expectEqualStrings("{\"servers\":{\"x\":{}}}", removed);
     const theirs = "{\"servers\":{\"app\":{\"command\":\"D:\\\\app.exe\"}}}";
-    try testing.expectEqual(Outcome.absent, (try unregisterText(a, theirs, .vscode, test_server, .windows)).keep);
-    try testing.expectEqual(Outcome.absent, (try unregisterText(a, "{}", .vscode, test_server, .windows)).keep);
+    try testing.expectEqual(Outcome.absent, (try unregisterText(a, theirs, .vscode, test_server, .windows, false)).keep);
+    try testing.expectEqual(Outcome.absent, (try unregisterText(a, "{}", .vscode, test_server, .windows, false)).keep);
 }
 
 test "locations" {

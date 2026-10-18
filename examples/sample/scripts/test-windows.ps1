@@ -391,4 +391,36 @@ if ($p.ExitCode -eq 0) { throw 'installing the 1.0.0 MSI over 1.0.1 was not refu
 Invoke-Checked msiexec.exe "/x `"$msi101`" /qn"
 Assert-Removed
 
+Write-Host '== MSI: an upgrade that moves the folder re-registers the MCP server there'
+# The old package does not unregister during an upgrade, so the entry
+# naming its folder must be recognised as left behind and replaced.
+$msiOld = Join-Path $env:SystemDrive 'zstaller test\MSI Old'
+Invoke-Checked msiexec.exe "/i `"$msi`" /qn `"INSTALLDIR=$msiOld`""
+Assert-McpRegistered $true
+Invoke-Checked msiexec.exe "/i `"$msi101`" /qn /l*v `"$PWD\msi-move.log`""
+if (Test-Path (Join-Path $msiOld 'sample.exe')) { throw "the upgrade left $msiOld behind" }
+$expected = (Join-Path $dir 'sample-tool.exe') -replace '\\', '\\'
+if (-not ((Get-Content $claudeJson -Raw) -match [regex]::Escape("`"command`":`"$expected`""))) {
+    throw "after the move the MCP server is not registered at ${dir}: $(Get-Content $claudeJson -Raw)"
+}
+Invoke-Checked msiexec.exe "/x `"$msi101`" /qn"
+Assert-Removed
+
+Write-Host '== A failing after_install hook rolls the MSI back and fails the EXE'
+# sample-tool --register cannot write registered.txt when a folder has
+# that name, so it exits non-zero.
+New-Item -ItemType Directory -Force (Join-Path $registered 'blocker') | Out-Null
+$p = Start-Process -FilePath msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$PWD\msi-hook-fail.log`"" -Wait -PassThru
+if ($p.ExitCode -ne 1603) { throw "the MSI with a failing hook exited with $($p.ExitCode), expected 1603" }
+if (Test-Path $app) { throw 'the MSI with a failing hook was not rolled back' }
+if (Get-MsiProducts) { throw 'the MSI with a failing hook stayed registered' }
+$p = Start-Process -FilePath $exe -ArgumentList '/S /NOPATH /NOMCP' -Wait -PassThru
+if ($p.ExitCode -ne 1) { throw "setup.exe with a failing hook exited with $($p.ExitCode), expected 1" }
+# The EXE keeps the files so that the user can retry or uninstall.
+if (-not (Test-Path $uninstaller)) { throw 'setup.exe with a failing hook did not keep its uninstaller' }
+Remove-Item -Recurse -Force (Split-Path $registered)
+Invoke-Checked $uninstaller '/S'
+for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+if (Test-Path $dir) { throw "$dir still exists after uninstalling the failed install" }
+
 Write-Host 'Windows end-to-end test passed'

@@ -169,7 +169,12 @@ fn status(io: Io, a: Allocator, out: *Io.Writer, server: registrar.Server, p: re
             continue;
         };
         const what = if (value) |v|
-            if (registrar.isOurs(a, v, server.command, os)) "registered" else "a different server has the name"
+            if (registrar.isOurs(a, v, server.command, os))
+                "registered"
+            else if (registrar.leftBehind(io, a, text, client, server, os))
+                "left behind by an earlier installation; run register to fix it"
+            else
+                "a different server has the name"
         else
             "not registered";
         out.print("  {s}: {s} ({s})\n", .{ client.label(), what, loc.file }) catch {};

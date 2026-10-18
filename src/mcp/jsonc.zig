@@ -55,6 +55,12 @@ const Object = struct {
 const Scanner = struct {
     text: []const u8,
     pos: usize = 0,
+    /// How many arrays and objects the scanner is inside. Nesting deeper
+    /// than `max_depth` is refused rather than recursed into, so a file
+    /// cannot exhaust the stack.
+    depth: usize = 0,
+
+    const max_depth = 512;
 
     /// Skips white space and comments.
     fn skip(s: *Scanner) Error!void {
@@ -105,6 +111,9 @@ const Scanner = struct {
 
     /// Skips any value starting at the next token.
     fn value(s: *Scanner) Error!void {
+        if (s.depth == max_depth) return error.InvalidJson;
+        s.depth += 1;
+        defer s.depth -= 1;
         switch (try s.peek()) {
             '"' => _ = try s.string(),
             '{' => _ = try s.object(null),
@@ -503,6 +512,18 @@ test "rejects what is not a JSON object" {
     try testing.expectError(error.InvalidJson, get("{\"a\":1} x", "mcpServers", "app"));
     try testing.expectError(error.InvalidJson, get("{\"a\":1", "mcpServers", "app"));
     try testing.expectError(error.NotAnObject, set(testing.allocator, "{\"mcpServers\":null}", "mcpServers", "app", "{}"));
+}
+
+test "refuses nesting too deep to scan" {
+    const deep = 100_000;
+    const text = try testing.allocator.alloc(u8, "{\"x\":".len + 2 * deep + 1);
+    defer testing.allocator.free(text);
+    @memcpy(text[0..5], "{\"x\":");
+    @memset(text[5..][0..deep], '[');
+    @memset(text[5 + deep ..][0..deep], ']');
+    text[text.len - 1] = '}';
+    try testing.expectError(error.InvalidJson, get(text, "mcpServers", "app"));
+    try testing.expect(try get("{\"x\":[[[{\"y\":[]}]]]}", "mcpServers", "app") == null);
 }
 
 test "keys with escapes" {

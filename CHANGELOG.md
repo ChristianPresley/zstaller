@@ -147,6 +147,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `zstaller-mcp` crashed on an AI tool file nested hundreds of thousands
+  of levels deep instead of reporting it as invalid, and opening a pipe
+  left at a tool's file path made it hang. During `unregister
+  --all-users`, which runs as root on uninstall, one user's file could
+  stop the entries of every later user from being removed. Such files
+  are now skipped and left alone.
+
+- An MSI upgrade that moved the application to another folder left the
+  AI tool entries naming the old folder: the old package does not
+  unregister during an upgrade, and the new one would not replace an
+  entry that runs a different program. An entry under the server's name
+  that runs a program of the same file name, at a path where nothing is
+  any more, is now treated as left behind by an earlier installation:
+  `register` replaces it, `unregister` removes it, and `status` says so.
+
 - Security: install folders outside Program Files no longer inherit
   permissions that let every user replace the installed programs, which
   include the uninstaller that runs as administrator and, possibly, a
