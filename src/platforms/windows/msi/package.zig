@@ -1220,7 +1220,7 @@ test "per-user builds and pre-releases get their own codes (skipped when msiinfo
     rc.release = "1.0.0-rc.1";
     // The product code and the component of demo.exe, then the package
     // code, of each build.
-    var found: [3][3][]u8 = undefined;
+    var found: [3][3][]u8 = @splat(@splat(&.{}));
     defer for (&found) |*f| for (f) |s| gpa.free(s);
     for ([_]Product{ base, per_user, rc }, 0..) |p, i| {
         var out: Writer.Allocating = .init(gpa);
