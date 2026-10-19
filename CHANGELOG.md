@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Added
 
 - `Options.mcp` packages the application, or one of its programs, as an
@@ -338,5 +340,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CODE_OF_CONDUCT, SECURITY, CODEOWNERS, issue and pull request templates.
 - CI workflow that checks formatting and runs tests on Linux and Windows.
 
-[Unreleased]: https://github.com/ChristianPresley/zstaller/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ChristianPresley/zstaller/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ChristianPresley/zstaller/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ChristianPresley/zstaller/releases/tag/v0.1.0

@@ -35,6 +35,14 @@ msiexec /x sample-<version>-windows-x86_64.msi /qn
 "C:\Program Files\Zstaller Sample\uninstall.exe" /uninstall /S
 ```
 
+## AI tools (MCP)
+
+The sample includes a small MCP server with one tool (`sha256`). The EXE
+installer's **Add to my AI tools** box, the MSI (unless `REGISTERMCP=0`)
+and, on Ubuntu, `/usr/lib/sample/zstaller-mcp register` add it to Claude
+Code, VS Code and the other AI tools you have; uninstalling removes it.
+For Claude Desktop, open `sample-<version>-<os>-<arch>.mcpb`.
+
 ## Ubuntu
 
 ```
