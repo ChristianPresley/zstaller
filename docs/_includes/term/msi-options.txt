@@ -1,0 +1,3 @@
+C:\> start /wait msiexec /i sample-1.0.0-windows-x86_64.msi /qn ADDTOPATH=0 DESKTOPSHORTCUT=1 REGISTERMCP=0 INSTALLDIR="C:\Apps\Sample"
+C:\> echo %errorlevel%
+0

@@ -1,0 +1,21 @@
+$ find zig-out/installers -type f | sort
+zig-out/installers/sample-1.0.0-ubuntu-aarch64.mcpb
+zig-out/installers/sample-1.0.0-ubuntu-aarch64.mcpb.sha256
+zig-out/installers/sample-1.0.0-ubuntu-x86_64.mcpb
+zig-out/installers/sample-1.0.0-ubuntu-x86_64.mcpb.sha256
+zig-out/installers/sample-1.0.0-windows-aarch64-setup.exe
+zig-out/installers/sample-1.0.0-windows-aarch64-setup.exe.sha256
+zig-out/installers/sample-1.0.0-windows-aarch64.mcpb
+zig-out/installers/sample-1.0.0-windows-aarch64.mcpb.sha256
+zig-out/installers/sample-1.0.0-windows-aarch64.msi
+zig-out/installers/sample-1.0.0-windows-aarch64.msi.sha256
+zig-out/installers/sample-1.0.0-windows-x86_64-setup.exe
+zig-out/installers/sample-1.0.0-windows-x86_64-setup.exe.sha256
+zig-out/installers/sample-1.0.0-windows-x86_64.mcpb
+zig-out/installers/sample-1.0.0-windows-x86_64.mcpb.sha256
+zig-out/installers/sample-1.0.0-windows-x86_64.msi
+zig-out/installers/sample-1.0.0-windows-x86_64.msi.sha256
+zig-out/installers/sample_1.0.0_amd64.deb
+zig-out/installers/sample_1.0.0_amd64.deb.sha256
+zig-out/installers/sample_1.0.0_arm64.deb
+zig-out/installers/sample_1.0.0_arm64.deb.sha256

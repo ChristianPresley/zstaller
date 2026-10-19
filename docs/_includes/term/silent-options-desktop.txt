@@ -1,0 +1,2 @@
+C:\> dir /b "C:\users\Public\Desktop"
+Zstaller Sample.lnk

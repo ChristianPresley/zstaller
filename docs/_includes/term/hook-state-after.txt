@@ -1,0 +1,2 @@
+C:\> dir /b "C:\ProgramData\Zstaller Sample"
+File Not Found

@@ -1,0 +1,8 @@
+C:\> start /wait sample-1.0.0-windows-x86_64-setup.exe /S
+C:\> echo %errorlevel%
+1
+
+Standard error:
+Zstaller Sample was installed, but sample-tool.exe, which finishes setting it up, failed with exit code 3.
+
+Run Setup again, or uninstall Zstaller Sample from Settings > Apps.

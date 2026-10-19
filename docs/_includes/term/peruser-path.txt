@@ -1,0 +1,5 @@
+C:\> reg query HKCU\Environment /v Path
+
+HKEY_CURRENT_USER\Environment
+    Path    REG_EXPAND_SZ    C:\users\root\AppData\Local\Programs\Zstaller Sample
+

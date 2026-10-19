@@ -1,0 +1,5 @@
+$ msiinfo tables sample-1.0.0-windows-x86_64.msi
+AppSearch Component CreateFolder CustomAction Directory Environment Feature 
+FeatureComponents File Icon InstallExecuteSequence InstallUISequence 
+LaunchCondition Media MsiLockPermissionsEx Property RegLocator Registry 
+Shortcut Signature Upgrade _ForceCodepage _SummaryInformation

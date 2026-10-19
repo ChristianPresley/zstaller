@@ -1,0 +1,2 @@
+C:\> type "C:\ProgramData\Zstaller Sample\registered.txt"
+1.0.0

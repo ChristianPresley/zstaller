@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: windows.upgrade_code '3C1B6E0A-8F7D-4E52' is not a GUID

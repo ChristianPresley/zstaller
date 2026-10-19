@@ -1,0 +1,6 @@
+C:\> dir /b "C:\Tools\Sample"
+README.md
+sample-tool.exe
+sample.exe
+uninstall.exe
+zstaller-mcp.exe

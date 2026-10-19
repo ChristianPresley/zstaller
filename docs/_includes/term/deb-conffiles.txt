@@ -1,0 +1,2 @@
+$ dpkg-query --showformat='${Conffiles}\n' --show sample
+ /etc/sample/sample.conf c48472c0d91c30c644b068c19f044af7

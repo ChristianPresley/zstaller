@@ -1,0 +1,17 @@
+C:\> reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall /s
+
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\zstaller.sample
+    DisplayIcon    REG_SZ    C:\users\root\AppData\Local\Programs\Zstaller Sample\sample.exe
+    DisplayName    REG_SZ    Zstaller Sample
+    DisplayVersion    REG_SZ    1.0.0
+    EstimatedSize    REG_DWORD    0x6eb
+    InstallLocation    REG_SZ    C:\users\root\AppData\Local\Programs\Zstaller Sample
+    NoModify    REG_DWORD    0x1
+    NoRepair    REG_DWORD    0x1
+    Publisher    REG_SZ    The zstaller Authors
+    QuietUninstallString    REG_SZ    "C:\users\root\AppData\Local\Programs\Zstaller Sample\uninstall.exe" /uninstall /S
+    UninstallString    REG_SZ    "C:\users\root\AppData\Local\Programs\Zstaller Sample\uninstall.exe" /uninstall
+    ZstallerAddedToPath    REG_DWORD    0x1
+    ZstallerProgramShortcuts    REG_SZ    
+    ZstallerShortcut    REG_SZ    C:\users\root\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Zstaller Sample.lnk
+

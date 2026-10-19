@@ -1,0 +1,2 @@
+$ lintian sample_1.0.0_amd64.deb && echo 'lintian: no errors or warnings'
+lintian: no errors or warnings

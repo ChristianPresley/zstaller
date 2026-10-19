@@ -1,0 +1,45 @@
+# The sidebar. Each section lists pages by URL (relative to the site root).
+- title: Getting started
+  pages:
+    - { title: Introduction, url: / }
+    - { title: Install zstaller, url: /getting-started/installation/ }
+    - { title: Your first installers, url: /getting-started/first-installers/ }
+    - { title: Try the installers, url: /getting-started/try-it/ }
+- title: Windows
+  pages:
+    - { title: The setup wizard, url: /guides/setup-wizard/ }
+    - { title: Branding the wizard, url: /guides/branding/ }
+    - { title: Silent installs and switches, url: /guides/silent-installs/ }
+    - { title: MSI for enterprise, url: /guides/msi/ }
+    - { title: Per-user installs, url: /guides/per-user/ }
+    - { title: "Install folder, PATH and shortcuts", url: /guides/folder-path-shortcuts/ }
+    - { title: Upgrades and uninstalling, url: /guides/upgrades/ }
+    - { title: Programs in use, url: /guides/programs-in-use/ }
+    - { title: Install hooks, url: /guides/hooks/ }
+    - { title: Code signing, url: /guides/code-signing/ }
+- title: Ubuntu
+  pages:
+    - { title: The .deb package, url: /guides/deb/ }
+- title: Everywhere
+  pages:
+    - { title: Multiple programs and files, url: /guides/programs-and-files/ }
+    - { title: MCP servers and AI tools, url: /guides/mcp/ }
+    - { title: Reproducible builds, url: /guides/reproducible-builds/ }
+    - { title: Releasing, url: /guides/releasing/ }
+    - { title: Adding a platform, url: /guides/adding-a-platform/ }
+- title: Reference
+  pages:
+    - { title: Build API, url: /reference/build-api/ }
+    - { title: All options, url: /reference/options/ }
+    - { title: Setup command line, url: /reference/setup-command-line/ }
+    - { title: MSI properties, url: /reference/msi-properties/ }
+    - { title: zstaller-mcp, url: /reference/zstaller-mcp/ }
+    - { title: Output files, url: /reference/output-files/ }
+    - { title: Build errors, url: /reference/build-errors/ }
+    - { title: How the MSI is written, url: /msi/ }
+- title: Help
+  pages:
+    - { title: Screenshot gallery, url: /gallery/ }
+    - { title: Troubleshooting, url: /troubleshooting/ }
+    - { title: FAQ, url: /faq/ }
+    - { title: Limitations, url: /limitations/ }

@@ -1,0 +1,4 @@
+C:\> dir /b "C:\ProgramData\Microsoft\Windows\Start Menu\Programs"
+Administrative Tools
+StartUp
+Zstaller Sample.lnk

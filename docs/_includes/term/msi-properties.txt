@@ -1,0 +1,16 @@
+$ msiinfo export sample-1.0.0-windows-x86_64.msi Property
+ADDTOPATH	1
+ALLUSERS	1
+ARPCOMMENTS	Example program packaged with zstaller
+ARPNOMODIFY	1
+ARPNOREPAIR	1
+ARPPRODUCTICON	ProductIcon.ico
+DESKTOPSHORTCUT	0
+Manufacturer	The zstaller Authors
+ProductCode	{0C1B18EC-DBA3-5FCE-90C8-3F9B91B420E7}
+ProductLanguage	1033
+ProductName	Zstaller Sample
+ProductVersion	1.0.0
+REGISTERMCP	1
+SecureCustomProperties	ADDTOPATH;DESKTOPSHORTCUT;NEWERVERSIONFOUND;OLDERVERSIONFOUND;REGISTERMCP
+UpgradeCode	{3C1B6E0A-8F7D-4E52-9B1A-6D2C4F8E7A10}

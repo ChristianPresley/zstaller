@@ -1,0 +1,6 @@
+$ cat ~/.config/Code/User/mcp.json
+{
+  "servers": {
+    "zstaller-sample": {"type":"stdio","command":"/usr/bin/sample-tool","args":["mcp"]}
+  }
+}

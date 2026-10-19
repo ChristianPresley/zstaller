@@ -1,0 +1,4 @@
+C:\> "C:\Program Files\Zstaller Sample\zstaller-mcp.exe" status
+Zstaller Sample (zstaller-sample) runs C:\Program Files\Zstaller Sample\sample-tool.exe
+  Claude Code: registered (C:\users\jane\.claude.json)
+  VS Code: not installed

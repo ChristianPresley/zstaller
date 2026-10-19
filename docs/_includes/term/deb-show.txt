@@ -1,0 +1,19 @@
+$ apt-cache show sample | grep -v -E '^(SHA|MD5|Filename|Size)'
+Package: sample
+Status: install ok installed
+Priority: optional
+Section: utils
+Installed-Size: 979
+Maintainer: The zstaller Authors <noreply@example.com>
+Architecture: amd64
+Version: 1.0.0
+Conffiles:
+ /etc/sample/sample.conf c48472c0d91c30c644b068c19f044af7
+Description: Example program packaged with zstaller
+ Prints its version, the platform it was built for and where it is
+ installed, to show how zstaller packages a Zig program.
+ .
+ sample-tool, installed with it, prints the SHA-256 of files.
+Description-md5: 
+Homepage: https://github.com/ChristianPresley/zstaller
+

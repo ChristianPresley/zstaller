@@ -1,0 +1,6 @@
+# The gems GitHub Pages builds the documentation site with, for previewing
+# it locally. See README.md in this folder.
+source "https://rubygems.org"
+
+gem "github-pages", group: :jekyll_plugins
+gem "webrick"

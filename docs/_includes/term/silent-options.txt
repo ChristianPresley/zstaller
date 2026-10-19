@@ -1,0 +1,6 @@
+C:\> start /wait sample-1.0.0-windows-x86_64-setup.exe /S "/D=C:\Tools\Sample" /NOPATH /DESKTOP /NOMCP
+C:\> echo %errorlevel%
+0
+
+Standard error:
+Zstaller Sample 1.0.0 was installed successfully.

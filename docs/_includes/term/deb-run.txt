@@ -1,0 +1,11 @@
+$ sample
+
+  Zstaller Sample 1.0.0
+  -------------------------------------------
+  Hello from the zstaller sample on linux-x86_64!
+
+  Installed at: /usr/bin/sample
+  Built with:   Zig 0.16.0, packaged by zstaller
+
+  To uninstall, run: sudo apt remove sample
+

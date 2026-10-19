@@ -1,0 +1,7 @@
+$ cat ~/.claude.json
+{
+  "mcpServers": {
+    "zstaller-sample": {"type":"stdio","command":"/usr/bin/sample-tool","args":["mcp"]}
+  },
+  "numStartups": 3
+}

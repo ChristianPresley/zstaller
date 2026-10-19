@@ -1,0 +1,5 @@
+C:\> reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Environment
+    Path    REG_EXPAND_SZ    %SystemRoot%\system32;%SystemRoot%;%SystemRoot%\system32\wbem;%SystemRoot%\system32\WindowsPowershell\v1.0;C:\Program Files\Zstaller Sample\
+

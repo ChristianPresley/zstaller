@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: icon 'assets/sample.png' is not a Windows .ico file: it is a PNG image. Convert it, for example with ImageMagick: magick app.png -define icon:auto-resize=256,48,32,16 app.ico

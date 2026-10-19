@@ -1,0 +1,4 @@
+$ /usr/lib/sample/zstaller-mcp status
+Zstaller Sample (zstaller-sample) runs /usr/bin/sample-tool
+  Claude Code: registered (/home/jane/.claude.json)
+  VS Code: registered (/home/jane/.config/Code/User/mcp.json)

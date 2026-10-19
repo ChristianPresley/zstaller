@@ -1,0 +1,9 @@
+$ cat /usr/share/applications/sample.desktop
+[Desktop Entry]
+Type=Application
+Name=Zstaller Sample
+Comment=Example program packaged with zstaller
+Exec=/usr/bin/sample
+Icon=sample
+Terminal=true
+Categories=Utility;

@@ -1,0 +1,8 @@
+C:\> type "C:\users\jane\.claude.json"
+{
+  "mcpServers": {
+    "zstaller-sample": {"type":"stdio","command":"C:\\Program Files\\Zstaller Sample\\sample-tool.exe","args":["mcp"]}
+  },
+  "numStartups": 3
+}
+

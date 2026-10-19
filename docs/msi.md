@@ -1,14 +1,18 @@
-# How zstaller writes MSI packages
+---
+title: How the MSI is written
+permalink: /msi/
+lead: zstaller writes MSI packages directly in Zig, without WiX or the Windows SDK. This is how.
+---
 
 An MSI file is a Windows Installer database stored in an OLE compound file.
 zstaller writes it directly in Zig, in four layers:
 
 | Layer | Source | Specification |
 | --- | --- | --- |
-| Compound file (CFB v3, 512-byte sectors) | [`cfb.zig`](../src/platforms/windows/msi/cfb.zig) | [MS-CFB] |
-| Installer database (tables, string pool, summary information) | [`database.zig`](../src/platforms/windows/msi/database.zig) | Windows Installer SDK, [MS-OLEPS] |
-| Product layout (which rows go in which tables) | [`package.zig`](../src/platforms/windows/msi/package.zig) | Windows Installer SDK |
-| Embedded cabinet (MSZIP) | [`cab.zig`](../src/platforms/windows/msi/cab.zig) | [MS-CAB], [MS-MCI] |
+| Compound file (CFB v3, 512-byte sectors) | [`cfb.zig`](https://github.com/ChristianPresley/zstaller/blob/main/src/platforms/windows/msi/cfb.zig) | [MS-CFB] |
+| Installer database (tables, string pool, summary information) | [`database.zig`](https://github.com/ChristianPresley/zstaller/blob/main/src/platforms/windows/msi/database.zig) | Windows Installer SDK, [MS-OLEPS] |
+| Product layout (which rows go in which tables) | [`package.zig`](https://github.com/ChristianPresley/zstaller/blob/main/src/platforms/windows/msi/package.zig) | Windows Installer SDK |
+| Embedded cabinet (MSZIP) | [`cab.zig`](https://github.com/ChristianPresley/zstaller/blob/main/src/platforms/windows/msi/cab.zig) | [MS-CAB], [MS-MCI] |
 
 ## Compound file
 

@@ -1,0 +1,6 @@
+C:\> start /wait sample-1.0.0-windows-x86_64-setup.exe /uninstall /S
+C:\> echo %errorlevel%
+1
+
+Standard error:
+Zstaller Sample is not installed.

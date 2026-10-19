@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: metadata.name 'my app!' is not a valid package name: use letters, digits, '_', '-' and '.'

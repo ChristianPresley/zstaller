@@ -1,0 +1,2 @@
+C:\> reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall /s
+(only the Zstaller Sample key)

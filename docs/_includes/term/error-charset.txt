@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: windows.display_name contains '→' (U+2192), which MSI packages cannot store: they use the Windows-1252 character set

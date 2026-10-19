@@ -1,0 +1,10 @@
+{%- comment -%}
+A terminal transcript from _includes/term/, recorded by _tools/capture.sh:
+the command as typed, its real output and, for Windows, its exit code.
+  {% include term.html name="silent-install" title="Command Prompt (administrator)" %}
+{%- endcomment -%}
+{%- capture body %}{% include term/{{ include.name }}.txt %}{% endcapture -%}
+<div class="term{% if include.title contains 'Command Prompt' or include.title contains 'PowerShell' %} windows{% endif %}">
+  <div class="term-bar"><span></span><span></span><span></span><p>{{ include.title | default: "Terminal" }}</p></div>
+  <pre><code>{{ body | strip | escape }}</code></pre>
+</div>

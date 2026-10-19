@@ -1,0 +1,3 @@
+$ cd zig-out/installers && cat sample_1.0.0_amd64.deb.sha256 && sha256sum -c sample_1.0.0_amd64.deb.sha256
+6ffd27d747a31a07f693b02a7c3b14688cdc73104c9f369f3076217a1b201ecd  sample_1.0.0_amd64.deb
+sample_1.0.0_amd64.deb: OK

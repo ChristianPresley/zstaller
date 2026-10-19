@@ -1,0 +1,64 @@
+# The screenshot gallery: every screen in assets/shots/, grouped, each with
+# the option or guide that produces it. _tools/capture.sh makes the images.
+- title: The setup wizard
+  link: /guides/setup-wizard/
+  shots:
+    - { name: wizard-welcome, caption: "Welcome, with custom artwork", option: "wizard.welcome_image", link: /guides/branding/ }
+    - { name: wizard-license, caption: "License Agreement, not yet accepted", option: "wizard.license_file", link: /guides/setup-wizard/#license-agreement }
+    - { name: wizard-license-accepted, caption: "License accepted: Next is enabled", option: "wizard.license_file", link: /guides/setup-wizard/#license-agreement }
+    - { name: wizard-location, caption: "Choose Install Location", option: "install_root, install_dir_name", link: /guides/folder-path-shortcuts/ }
+    - { name: wizard-options, caption: "Additional Tasks: PATH, desktop shortcut, AI tools", option: "add_to_path, desktop_shortcut, mcp.register", link: /guides/setup-wizard/#additional-tasks }
+    - { name: wizard-installing, caption: "Installing", option: "Guide", link: /guides/setup-wizard/#installing }
+    - { name: wizard-finished, caption: "Finished, with Launch", option: "wizard.launch_on_finish", link: /guides/setup-wizard/#finished }
+    - { name: wizard-launched, caption: "The application, launched from Finished", option: "wizard.launch_on_finish", link: /guides/setup-wizard/#finished }
+    - { name: wizard-cancel-confirm, caption: "Cancel asks first", option: "Guide", link: /guides/setup-wizard/#cancel }
+- title: Built-in artwork and branding
+  link: /guides/branding/
+  shots:
+    - { name: builtin-welcome, caption: "Built-in artwork, default color", option: "wizard.accent_color", link: /guides/branding/#built-in-artwork }
+    - { name: builtin-license, caption: "Built-in header", option: "wizard.accent_color", link: /guides/branding/#built-in-artwork }
+    - { name: accent-welcome, caption: "accent_color = 0x2E7D32", option: "wizard.accent_color", link: /guides/branding/#built-in-artwork }
+    - { name: accent-license, caption: "Header in the accent color", option: "wizard.accent_color", link: /guides/branding/#built-in-artwork }
+    - { name: accent-finished, caption: "Finished in the accent color", option: "wizard.accent_color", link: /guides/branding/#built-in-artwork }
+    - { name: dpi150-builtin, caption: "Built-in artwork at 150% scaling", option: "Guide", link: /guides/branding/#high-dpi-displays }
+    - { name: dpi150-custom-license, caption: "Double-size images at 150% scaling", option: "Guide", link: /guides/branding/#high-dpi-displays }
+- title: Pages and choices
+  link: /guides/folder-path-shortcuts/
+  shots:
+    - { name: minimal-welcome, caption: "Custom welcome_text", option: "wizard.welcome_text", link: /guides/setup-wizard/#pages-that-come-and-go }
+    - { name: minimal-location, caption: "allow_install_dir_change = false, no tasks", option: "allow_install_dir_change", link: /guides/folder-path-shortcuts/#the-install-folder }
+    - { name: minimal-finished, caption: "Custom finish_text, no Launch", option: "wizard.finish_text", link: /guides/setup-wizard/#pages-that-come-and-go }
+    - { name: pathonly-options, caption: "Only the PATH task is optional", option: "add_to_path", link: /guides/folder-path-shortcuts/#path }
+    - { name: always-location, caption: "Every task .always: no Additional Tasks page", option: "add_to_path, desktop_shortcut", link: /guides/folder-path-shortcuts/#which-tasks-the-wizard-offers }
+    - { name: root-program-data, caption: "install_root = .program_data", option: "install_root", link: /guides/folder-path-shortcuts/#the-install-folder }
+    - { name: root-system-drive, caption: "install_root = .system_drive", option: "install_root", link: /guides/folder-path-shortcuts/#the-install-folder }
+    - { name: peruser-welcome, caption: "Per-user build: no UAC prompt", option: "scope = .user", link: /guides/per-user/ }
+    - { name: peruser-location, caption: "Per-user folder in %LOCALAPPDATA%", option: "scope = .user", link: /guides/per-user/ }
+    - { name: peruser-options, caption: "Per-user tasks", option: "scope = .user", link: /guides/per-user/ }
+- title: Upgrades, repairs and downgrades
+  link: /guides/upgrades/
+  shots:
+    - { name: upgrade-welcome, caption: "An older version will be upgraded", option: "Guide", link: /guides/upgrades/ }
+    - { name: upgrade-location, caption: "Upgrades start in the existing folder", option: "Guide", link: /guides/upgrades/ }
+    - { name: upgrade-finished, caption: "Upgraded", option: "Guide", link: /guides/upgrades/ }
+    - { name: repair-welcome, caption: "The same version: repair", option: "Guide", link: /guides/upgrades/#the-same-version-again }
+    - { name: downgrade-refused, caption: "An older version is refused", option: "Guide", link: /guides/upgrades/#an-older-version }
+- title: Uninstalling and programs in use
+  link: /guides/programs-in-use/
+  shots:
+    - { name: uninstall-confirm, caption: "The uninstaller", option: "Guide", link: /guides/upgrades/#uninstalling }
+    - { name: uninstall-finished, caption: "Removed", option: "Guide", link: /guides/upgrades/#uninstalling }
+    - { name: in-use-uninstall, caption: "Programs in Use, with Close programs", option: "close_running_apps", link: /guides/programs-in-use/ }
+    - { name: in-use-close-confirm, caption: "Closing asks first", option: "close_running_apps", link: /guides/programs-in-use/ }
+    - { name: in-use-closed, caption: "Closed, and uninstalled", option: "close_running_apps", link: /guides/programs-in-use/ }
+    - { name: in-use-install-no-close, caption: "Programs in Use without close_running_apps", option: "close_running_apps", link: /guides/programs-in-use/ }
+    - { name: hook-failed, caption: "A failing after_install hook", option: "after_install", link: /guides/hooks/ }
+- title: MSI, command line and Windows
+  link: /guides/msi/
+  shots:
+    - { name: exe-refuses-msi, caption: "The EXE refuses while the MSI is installed", option: "Guide", link: /guides/msi/#exe-or-msi-not-both }
+    - { name: help, caption: "setup.exe /?", option: "Switches", link: /reference/setup-command-line/ }
+    - { name: bad-switch, caption: "An unknown switch", option: "Switches", link: /guides/silent-installs/ }
+    - { name: apps-and-features, caption: "The installed program in Wine's Add/Remove Programs", option: "Guide", link: /guides/upgrades/#uninstalling }
+    - { name: start-menu, caption: "The Start Menu shortcut", option: "start_menu_shortcut", link: /guides/folder-path-shortcuts/#shortcuts }
+    - { name: desktop-shortcut, caption: "The desktop shortcut", option: "desktop_shortcut", link: /guides/folder-path-shortcuts/#shortcuts }

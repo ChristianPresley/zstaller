@@ -1,0 +1,10 @@
+C:\> findstr /c:"Action ended" install.log
+Action ended 7:40:16: InstallFiles. Return value 1.
+Action ended 7:40:16: CreateShortcuts. Return value 1.
+Action ended 7:40:16: WriteRegistryValues. Return value 1.
+Action ended 7:40:16: WriteEnvironmentStrings. Return value 1.
+Action ended 7:40:16: RegisterProduct. Return value 1.
+Action ended 7:40:16: ZstallerRegisterMcp. Return value 1.
+Action ended 7:40:17: ZstallerRegisterMcp. Return value 1.
+Action ended 7:40:17: InstallFinalize. Return value 1.
+Action ended 7:40:17: INSTALL. Return value 1.

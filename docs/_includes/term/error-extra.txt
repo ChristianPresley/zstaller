@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: extra_files[0].dest '../README.md' is not a valid install path: use a relative path such as 'docs/manual.txt', without '..', empty parts or the characters < > : " | ? *

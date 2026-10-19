@@ -1,0 +1,9 @@
+$ unzip -l sample-1.0.0-windows-x86_64.mcpb
+Archive:  sample-1.0.0-windows-x86_64.mcpb
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      631  1980-01-01 00:00   manifest.json
+     7061  1980-01-01 00:00   icon.png
+   691712  1980-01-01 00:00   server/sample-tool.exe
+---------                     -------
+   699404                     3 files

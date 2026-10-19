@@ -1,0 +1,3 @@
+C:\> start /wait msiexec /i sample-1.0.0-windows-x86_64.msi /qn /l*v install.log
+C:\> echo %errorlevel%
+0

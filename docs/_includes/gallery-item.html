@@ -1,0 +1,6 @@
+<figure class="tile">
+  <a href="{{ '/assets/shots/' | append: include.name | append: '.png' | relative_url }}" class="zoom" data-caption="{{ include.caption | escape }}">
+    <img src="{{ '/assets/shots/' | append: include.name | append: '.png' | relative_url }}" alt="{{ include.caption | escape }}" loading="lazy">
+  </a>
+  <figcaption>{{ include.caption }}{% if include.link %} · <a href="{{ include.link | relative_url }}">{{ include.option | default: "Guide" }}</a>{% endif %}</figcaption>
+</figure>

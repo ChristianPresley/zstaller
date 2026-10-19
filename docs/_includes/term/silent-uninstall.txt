@@ -1,0 +1,6 @@
+C:\> start /wait "C:\Program Files\Zstaller Sample\uninstall.exe" /S
+C:\> echo %errorlevel%
+0
+
+Standard error:
+Zstaller Sample was removed.

@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: version 2026.10.0 does not fit an MSI ProductVersion (at most 255.255.65535); set windows.msi_version, e.g. "26.10.0" for 2026.10.0, and keep it increasing with every release

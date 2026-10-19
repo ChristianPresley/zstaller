@@ -1,0 +1,11 @@
+C:\> sample
+
+  Zstaller Sample 1.0.0
+  -------------------------------------------
+  Hello from the zstaller sample on windows-x86_64!
+
+  Installed at: C:\Program Files\Zstaller Sample\sample.exe
+  Built with:   Zig 0.16.0, packaged by zstaller
+
+  To uninstall, open Settings > Apps > Installed apps,
+  find "Zstaller Sample" and choose Uninstall.

@@ -1,0 +1,31 @@
+# The zstaller documentation site, built by GitHub Pages' Jekyll from this
+# folder (.github/workflows/pages.yml). Preview it locally with
+#   bundle exec jekyll serve --source docs
+# using the github-pages gem.
+title: zstaller
+description: >-
+  Installers for Zig programs, written in Zig: MSI and EXE for Windows,
+  .deb for Ubuntu, from one `zig build installer`.
+url: https://christianpresley.github.io
+baseurl: /zstaller
+repository: ChristianPresley/zstaller
+repo_url: https://github.com/ChristianPresley/zstaller
+blob_url: https://github.com/ChristianPresley/zstaller/blob/main
+version: 0.2.0
+permalink: pretty
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter_opts:
+    disable: true
+exclude:
+  - _tools
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A documentation site in `docs/`, published to GitHub Pages at
+  <https://christianpresley.github.io/zstaller/>: getting started, guides for
+  every installer feature, a reference for every option, switch and error, and
+  screenshots of every installer screen. `docs/_tools/capture.sh` rebuilds the
+  screenshots and terminal transcripts from real installers.
+
 ### Fixed
 
 - `scripts/release.ps1 -Tag` passed the installers to `gh release create`

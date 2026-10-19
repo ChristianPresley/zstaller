@@ -1,0 +1,13 @@
+{%- comment -%}
+A screenshot from assets/shots/, captured by _tools/capture.sh.
+  {% include shot.html name="wizard-welcome" caption="The Welcome page" %}
+Optional: alt (defaults to the caption), small=true for a narrower figure.
+{%- endcomment -%}
+<figure class="shot{% if include.small %} small{% endif %}">
+  <a href="{{ '/assets/shots/' | append: include.name | append: '.png' | relative_url }}" class="zoom">
+    <img src="{{ '/assets/shots/' | append: include.name | append: '.png' | relative_url }}" alt="{{ include.alt | default: include.caption | strip_html | escape }}" loading="lazy">
+  </a>
+  {%- if include.caption %}
+  <figcaption>{{ include.caption | markdownify | remove: '<p>' | remove: '</p>' | strip }}</figcaption>
+  {%- endif %}
+</figure>

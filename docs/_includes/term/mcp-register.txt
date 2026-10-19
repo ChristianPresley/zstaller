@@ -1,0 +1,3 @@
+$ /usr/lib/sample/zstaller-mcp register
+  Claude Code: registered in /home/jane/.claude.json
+  VS Code: registered in /home/jane/.config/Code/User/mcp.json

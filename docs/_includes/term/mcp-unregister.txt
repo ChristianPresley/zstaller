@@ -1,0 +1,3 @@
+$ /usr/lib/sample/zstaller-mcp unregister
+  Claude Code: removed from /home/jane/.claude.json
+  VS Code: removed from /home/jane/.config/Code/User/mcp.json

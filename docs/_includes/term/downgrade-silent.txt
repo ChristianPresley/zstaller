@@ -1,0 +1,6 @@
+C:\> start /wait sample-1.0.0-windows-x86_64-setup.exe /S
+C:\> echo %errorlevel%
+1
+
+Standard error:
+Version 1.1.0 of Zstaller Sample is already installed, which is newer than 1.0.0. Uninstall it first to install this version.

@@ -1,0 +1,2 @@
+$ zig build installer
+error: zstaller: windows.wizard.banner_image must be 493x58 pixels, or 986x116 for high-DPI displays, but 'assets/sample.png' is 256x256

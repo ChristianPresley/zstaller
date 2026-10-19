@@ -1,0 +1,30 @@
+$ unzip -p sample-1.0.0-windows-x86_64.mcpb manifest.json
+{
+  "manifest_version": "0.3",
+  "name": "zstaller-sample",
+  "display_name": "Zstaller Sample",
+  "version": "1.0.0",
+  "description": "Example program packaged with zstaller",
+  "author": {
+    "name": "The zstaller Authors"
+  },
+  "homepage": "https://github.com/ChristianPresley/zstaller",
+  "license": "Apache-2.0",
+  "icon": "icon.png",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/sample-tool.exe",
+    "mcp_config": {
+      "command": "${__dirname}/server/sample-tool.exe",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "win32"
+    ]
+  }
+}

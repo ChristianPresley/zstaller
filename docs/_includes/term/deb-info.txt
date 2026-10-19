@@ -1,0 +1,22 @@
+$ dpkg-deb --info sample_1.0.0_amd64.deb
+ new Debian package, version 2.0.
+ size 405048 bytes: control archive=1375 bytes.
+      24 bytes,     1 lines      conffiles
+     456 bytes,    13 lines      control
+     774 bytes,    12 lines      md5sums
+     320 bytes,    11 lines   *  postinst             #!/bin/sh
+     258 bytes,    10 lines   *  postrm               #!/bin/sh
+     295 bytes,     7 lines   *  prerm                #!/bin/sh
+ Package: sample
+ Version: 1.0.0
+ Architecture: amd64
+ Maintainer: The zstaller Authors <noreply@example.com>
+ Installed-Size: 979
+ Section: utils
+ Priority: optional
+ Homepage: https://github.com/ChristianPresley/zstaller
+ Description: Example program packaged with zstaller
+  Prints its version, the platform it was built for and where it is
+  installed, to show how zstaller packages a Zig program.
+  .
+  sample-tool, installed with it, prints the SHA-256 of files.

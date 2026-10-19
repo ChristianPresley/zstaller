@@ -26,6 +26,10 @@ Every package is produced by pure Zig code: no WiX, NSIS, `dpkg-deb`, `ar`,
 `tar` or Windows SDK is needed, and installers can be built from any host Zig
 supports.
 
+**Documentation:** the full guide, with getting-started walkthroughs, a
+screenshot of every installer screen and a reference for every option, is at
+<https://christianpresley.github.io/zstaller/>.
+
 ## Supported targets
 
 | Target | Zig target | Formats |

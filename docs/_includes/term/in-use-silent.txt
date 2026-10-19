@@ -1,0 +1,12 @@
+C:\> start /wait "C:\Program Files\Zstaller Sample\uninstall.exe" /S
+C:\> echo %errorlevel%
+1
+
+Standard error:
+Zstaller Sample cannot be uninstalled while its files are in use.
+
+In use by:
+  sample-tool.exe (process ID 260, user VM\root)
+    C:\Program Files\Zstaller Sample\sample-tool.exe
+
+Close it, then run the uninstaller again.

@@ -1,0 +1,13 @@
+$ /usr/lib/sample/zstaller-mcp
+Usage: zstaller-mcp <command>
+
+Registers the Zstaller Sample MCP server (zstaller-sample) with your AI tools:
+Claude Code and VS Code.
+
+Commands:
+  register                 add it for the current user
+  unregister               remove it for the current user
+  unregister --all-users   remove it for every user (as administrator or root)
+  status                   show where it is registered
+
+Only entries that run this installation's program are changed or removed.

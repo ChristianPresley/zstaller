@@ -1,0 +1,5 @@
+C:\> type "C:\users\jane\.claude.json"
+{
+  "numStartups": 3
+}
+
