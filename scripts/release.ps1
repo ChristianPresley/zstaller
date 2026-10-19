@@ -40,7 +40,9 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $repo
 
 function Invoke-Native {
-    & $args[0] @($args | Select-Object -Skip 1)
+    # An argument that is itself a list (the release's files) becomes one
+    # argument per item; otherwise gh would get them as a single string.
+    & $args[0] @($args | Select-Object -Skip 1 | ForEach-Object { $_ })
     if ($LASTEXITCODE -ne 0) { throw "$($args -join ' ') failed with exit code $LASTEXITCODE" }
 }
 

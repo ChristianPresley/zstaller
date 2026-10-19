@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `scripts/release.ps1 -Tag` passed the installers to `gh release create`
+  as one string, so the upload failed with "no matches found".
+
 ## [0.2.0] - 2026-10-19
 
 ### Added
