@@ -39,7 +39,7 @@ test isValidServerName {
     try std.testing.expect(isValidServerName("my-app_2"));
     try std.testing.expect(!isValidServerName("my app"));
     try std.testing.expect(!isValidServerName(""));
-    try std.testing.expect(!isValidServerName("a" ** 65));
+    try std.testing.expect(!isValidServerName((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "a"; var b: [s.len * 65]u8 = undefined; for (0..65) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; })));
 }
 
 /// The server program for this target.
@@ -160,8 +160,8 @@ pub fn debHelperPath(b: *std.Build, pkg_name: []const u8) []const u8 {
 pub fn clientNames(ctx: *const api.Context) []const []const u8 {
     const m = ctx.options.mcp.?;
     var list: std.ArrayList([]const u8) = .empty;
-    inline for (@typeInfo(api.McpClients).@"struct".fields) |f| {
-        if (@field(m.clients, f.name)) list.append(ctx.b.allocator, f.name) catch @panic("OOM");
+    inline for (@typeInfo(api.McpClients).@"struct".field_names) |f_name| {
+        if (@field(m.clients, f_name)) list.append(ctx.b.allocator, f_name) catch @panic("OOM");
     }
     return list.items;
 }

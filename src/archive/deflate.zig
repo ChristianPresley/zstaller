@@ -72,7 +72,7 @@ pub fn decompress(gpa: Allocator, data: []const u8, container: Container) ![]u8 
 
 test "round trip all containers" {
     const gpa = std.testing.allocator;
-    const input = "zstaller " ** 1000 ++ "tail";
+    const input = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "zstaller "; var b: [s.len * 1000]u8 = undefined; for (0..1000) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) ++ "tail";
     inline for (.{ Container.raw, Container.gzip, Container.zlib }) |container| {
         const packed_bytes = try compress(gpa, input, container);
         defer gpa.free(packed_bytes);
@@ -85,7 +85,7 @@ test "round trip all containers" {
 
 test "gzipBest round trips and marks maximum compression" {
     const gpa = std.testing.allocator;
-    const input = "man page text " ** 200;
+    const input = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "man page text "; var b: [s.len * 200]u8 = undefined; for (0..200) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
     const gz = try gzipBest(gpa, input);
     defer gpa.free(gz);
     try std.testing.expectEqual(@as(u8, 2), gz[8]);

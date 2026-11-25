@@ -101,8 +101,8 @@ pub fn write(gpa: Allocator, out: *Writer, pkg: Package) Error!void {
 }
 
 fn validate(pkg: Package) error{ InvalidPath, InvalidField, InvalidScript }!void {
-    inline for (@typeInfo(Scripts).@"struct".fields) |field| {
-        if (@field(pkg.scripts, field.name)) |script| {
+    inline for (@typeInfo(Scripts).@"struct".field_names) |field_name| {
+        if (@field(pkg.scripts, field_name)) |script| {
             if (!std.mem.startsWith(u8, script, "#!")) return error.InvalidScript;
         }
     }
@@ -204,9 +204,9 @@ fn buildControlTar(gpa: Allocator, pkg: Package) Error![]u8 {
     if (conffiles.written().len > 0) {
         try t.writeFileBytes("./conffiles", conffiles.written(), .{ .mtime = pkg.mtime });
     }
-    inline for (@typeInfo(Scripts).@"struct".fields) |field| {
-        if (@field(pkg.scripts, field.name)) |script| {
-            try t.writeFileBytes("./" ++ field.name, script, .{ .mode = 0o755, .mtime = pkg.mtime });
+    inline for (@typeInfo(Scripts).@"struct".field_names) |field_name| {
+        if (@field(pkg.scripts, field_name)) |script| {
+            try t.writeFileBytes("./" ++ field_name, script, .{ .mode = 0o755, .mtime = pkg.mtime });
         }
     }
     try t.finish();

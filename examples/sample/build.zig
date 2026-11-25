@@ -144,7 +144,7 @@ fn createTool(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .root_source_file = b.path("src/tool.zig"),
         .target = target,
         .optimize = optimize,
-        .strip = optimize != .Debug,
+        .strip = optimize != .debug,
     });
     mod.addOptions("options", options);
     return b.addExecutable(.{ .name = "sample-tool", .root_module = mod });
@@ -159,7 +159,7 @@ fn createExe(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .target = target,
         .optimize = optimize,
         // Smaller installers: drop debug info from release binaries.
-        .strip = optimize != .Debug,
+        .strip = optimize != .debug,
     });
     mod.addOptions("options", options);
     // Give the Windows executable the same icon as its installers, so the

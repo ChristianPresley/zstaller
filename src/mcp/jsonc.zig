@@ -367,8 +367,8 @@ fn memberIndent(text: []const u8, obj: Object, owner_pos: usize, fallback: []con
     }
     const outer = lineIndent(text, owner_pos);
     if (outer.len == 0) return if (fallback.len > 0) fallback else "  ";
-    const tabs = "\t" ** 16;
-    const spaces = " " ** 32;
+    const tabs = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "\t"; var b: [s.len * 16]u8 = undefined; for (0..16) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
+    const spaces = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = " "; var b: [s.len * 32]u8 = undefined; for (0..32) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
     return if (outer[0] == '\t') tabs[0..@min(tabs.len, outer.len + 1)] else spaces[0..@min(spaces.len, outer.len + 2)];
 }
 
