@@ -245,11 +245,11 @@ pub fn changelogFile(gpa: Allocator, name: []const u8, version: []const u8, main
         \\ -- {s}  {s}, {d:0>2} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} +0000
         \\
     , .{
-        name,                               version,
-        version,                            maintainer,
-        weekdays[day.day % 7],              md.day_index + 1,
-        months[@intFromEnum(md.month) - 1], yd.year,
-        ds.getHoursIntoDay(),               ds.getMinutesIntoHour(),
+        name,                              version,
+        version,                           maintainer,
+        weekdays[day.day % 7],             md.day_index + 1,
+        months[@backingInt(md.month) - 1], yd.year,
+        ds.getHoursIntoDay(),              ds.getMinutesIntoHour(),
         ds.getSecondsIntoMinute(),
     });
 }

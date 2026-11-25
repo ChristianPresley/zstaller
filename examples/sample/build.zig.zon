@@ -20,7 +20,7 @@
     // zstaller reads these two extra fields for package metadata.
     .description = "Example program packaged with zstaller",
     .license = "Apache-2.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // In your own project, use `zig fetch --save <zstaller URL>` instead.
         .zstaller = .{ .path = "../.." },

@@ -133,15 +133,15 @@ pub fn main(init: std.process.Init) u8 {
     // file planted next to the installer cannot run as administrator.
     _ = w32.SetDefaultDllDirectories(w32.LOAD_LIBRARY_SEARCH_SYSTEM32);
     const gpa = init.arena.allocator();
-    const args = init.minimal.args.toSlice(gpa) catch return @intFromEnum(ExitCode.failure);
+    const args = init.minimal.args.toSlice(gpa) catch return @backingInt(ExitCode.failure);
     var state: State = .{ .gpa = gpa, .io = init.io, .env = init.environ_map, .silent = false };
 
     const cmd = cli.parse(if (args.len > 0) args[1..] else args) catch {
         state.message("Unrecognized option.\n\n" ++ help_text, w32.MB_ICONERROR);
-        return @intFromEnum(ExitCode.usage);
+        return @backingInt(ExitCode.usage);
     };
     state.silent = cmd.silent;
-    const self_path = std.process.executablePathAlloc(init.io, gpa) catch return @intFromEnum(ExitCode.failure);
+    const self_path = std.process.executablePathAlloc(init.io, gpa) catch return @backingInt(ExitCode.failure);
     const action = cmd.action orelse cli.defaultAction(self_path);
     if (action == .install or action == .uninstall) payload_bytes = readOwnPayload(init.io, gpa, self_path);
     const code: ExitCode = switch (action) {
@@ -167,7 +167,7 @@ pub fn main(init: std.process.Init) u8 {
         },
         .cleanup => cleanup(&state, cmd.cleanup_dir.?, cmd.wait_handle, self_path),
     };
-    return @intFromEnum(code);
+    return @backingInt(code);
 }
 
 /// The install directory a new installation goes to: the one an earlier

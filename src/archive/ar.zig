@@ -92,5 +92,12 @@ test "rejects long names" {
     var buf: [128]u8 = undefined;
     var w: Writer = .fixed(&buf);
     const a = try ArWriter.init(&w);
-    try testing.expectError(error.NameTooLong, a.writeMember((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 17]u8 = undefined; for (0..17) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }), "", 0));
+    try testing.expectError(error.NameTooLong, a.writeMember((comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        const s = "x";
+        var b: [s.len * 17]u8 = undefined;
+        for (0..17) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+        const c = b;
+        break :blk &c;
+    }), "", 0));
 }

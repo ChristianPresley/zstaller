@@ -5,7 +5,7 @@ get set up and what a pull request needs before it can merge.
 
 ## Ground rules
 
-- **Zig 0.16.0 only.** Code must build with the 0.16.0 release.
+- **Zig 0.17.0 only.** Code must build with the 0.17.0 release.
 - **Zero third-party dependencies.** Use only the Zig standard library. Do not
   add entries to `.dependencies` in `build.zig.zon` and do not shell out to
   external tools for core functionality. Optional verification in tests (for
@@ -15,7 +15,7 @@ get set up and what a pull request needs before it can merge.
 
 ## Development setup
 
-1. Install [Zig 0.16.0](https://ziglang.org/download/).
+1. Install [Zig 0.17.0](https://ziglang.org/download/).
 2. Clone the repository and run the tests:
 
    ```sh

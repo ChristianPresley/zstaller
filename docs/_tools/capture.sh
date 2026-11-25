@@ -7,7 +7,7 @@
 # scenario needs, runs the Windows installers under Wine on a virtual
 # display and clicks through them, and installs the .deb on this machine.
 #
-# Needs Linux with zig 0.16.0, wine, Xvfb, xdotool, ImageMagick, msitools,
+# Needs Linux with zig 0.17.0, wine, Xvfb, xdotool, ImageMagick, msitools,
 # dpkg and lintian; the Ubuntu scenarios need root (they install the .deb).
 #
 #   docs/_tools/capture.sh                 every scenario

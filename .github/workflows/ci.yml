@@ -27,7 +27,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Install package verification tools
         if: runner.os == 'Linux'
@@ -53,7 +53,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Install lintian
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lintian
@@ -77,7 +77,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       # A throwaway certificate, trusted on this runner only, to test the
       # `sign` hook: the installers, the installed application and
@@ -122,7 +122,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Build twice and compare
         shell: bash

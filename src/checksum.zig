@@ -64,7 +64,14 @@ test "known digest and sidecar line" {
 test "digestFile matches digest" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const data = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 200_000]u8 = undefined; for (0..200_000) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
+    const data = (comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        const s = "x";
+        var b: [s.len * 200_000]u8 = undefined;
+        for (0..200_000) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+        const c = b;
+        break :blk &c;
+    });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "f", .data = data });
     const d = try digestFile(std.testing.io, tmp.dir, "f");
     try std.testing.expectEqual(digest(data), d);

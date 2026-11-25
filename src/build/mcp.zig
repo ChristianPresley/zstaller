@@ -39,7 +39,14 @@ test isValidServerName {
     try std.testing.expect(isValidServerName("my-app_2"));
     try std.testing.expect(!isValidServerName("my app"));
     try std.testing.expect(!isValidServerName(""));
-    try std.testing.expect(!isValidServerName((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "a"; var b: [s.len * 65]u8 = undefined; for (0..65) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; })));
+    try std.testing.expect(!isValidServerName((comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        const s = "a";
+        var b: [s.len * 65]u8 = undefined;
+        for (0..65) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+        const c = b;
+        break :blk &c;
+    })));
 }
 
 /// The server program for this target.

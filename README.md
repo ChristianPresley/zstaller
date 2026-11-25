@@ -3,7 +3,7 @@
 [![CI](https://github.com/ChristianPresley/zstaller/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristianPresley/zstaller/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-A packaged installer generator for Zig projects, written entirely in Zig 0.16
+A packaged installer generator for Zig projects, written entirely in Zig 0.17
 with zero third-party dependencies.
 
 Add zstaller to your project's `build.zig.zon`, call it from `build.zig`, and
@@ -46,7 +46,7 @@ toolchain is required.
 ## Quick start
 
 These steps take a project made by `zig init` to installers for every
-target. You need [Zig 0.16.0](https://ziglang.org/download/) and nothing
+target. You need [Zig 0.17.0](https://ziglang.org/download/) and nothing
 else, on Linux, Windows or macOS.
 
 **1. Add zstaller** to your `build.zig.zon`:
@@ -59,7 +59,7 @@ Append `#<tag>` to the URL to pin a release. To use a local checkout, add `.zsta
 the path must be relative.
 
 **2. Describe the package.** zstaller reads `name`, `version`,
-`description` and `license` from `build.zig.zon`. Zig 0.16 accepts the
+`description` and `license` from `build.zig.zon`. Zig 0.17 accepts the
 two extra fields. MSI and `.deb` packages need the description:
 
 ```zig
@@ -67,7 +67,7 @@ two extra fields. MSI and `.deb` packages need the description:
     .name = .myapp,
     .version = "1.2.0",
     .fingerprint = 0x...,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .description = "A tool that does useful things",
     .license = "Apache-2.0",
     .dependencies = .{ .zstaller = .{ .url = "...", .hash = "..." } },
@@ -694,7 +694,7 @@ The release notes explain how to install, run and remove them.
 ## Making a release
 
 Build every installer locally with [PowerShell 7](https://github.com/PowerShell/PowerShell)
-and Zig 0.16.0, from a clean checkout of the commit to release:
+and Zig 0.17.0, from a clean checkout of the commit to release:
 
 ```sh
 pwsh scripts/release.ps1 -OutputDir ~/Desktop/zstaller-installers

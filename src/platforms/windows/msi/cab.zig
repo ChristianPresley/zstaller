@@ -133,7 +133,7 @@ pub fn write(gpa: Allocator, out: *Writer, files: []const File, compression: Com
     // CFFOLDER
     try out.writeInt(u32, @intCast(data_start), .little);
     try out.writeInt(u16, @intCast(num_blocks), .little);
-    try out.writeInt(u16, @intFromEnum(kind), .little);
+    try out.writeInt(u16, @backingInt(kind), .little);
 
     // CFFILE entries
     var folder_off: u32 = 0;
@@ -245,7 +245,7 @@ pub fn extractForTest(gpa: Allocator, cab: []const u8) !std.ArrayList(File) {
     const nfiles = std.mem.readInt(u16, cab[28..30], .little);
     const data_start = std.mem.readInt(u32, cab[36..40], .little);
     const nblocks = std.mem.readInt(u16, cab[40..42], .little);
-    const kind: Compression = @enumFromInt(std.mem.readInt(u16, cab[42..44], .little));
+    const kind: Compression = @fromBackingInt(@intCast(std.mem.readInt(u16, cab[42..44], .little)));
 
     var folder: std.ArrayList(u8) = .empty;
     defer folder.deinit(gpa);

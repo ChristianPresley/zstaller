@@ -16,7 +16,7 @@
 //! Application metadata read from a consumer's `build.zig.zon`.
 //!
 //! zstaller reads `name` and `version`, which every package manifest has, plus
-//! the optional `description` and `license` fields. Zig 0.16 accepts these
+//! the optional `description` and `license` fields. Zig 0.17 accepts these
 //! extra fields in a manifest, so consumers keep all metadata in one place.
 //! Every other field is ignored.
 //!
@@ -264,7 +264,7 @@ test "parse full manifest" {
         \\    .description = "A tool that does things",
         \\    .license = "Apache-2.0",
         \\    .fingerprint = 0x276f7ca0b630ab83,
-        \\    .minimum_zig_version = "0.16.0",
+        \\    .minimum_zig_version = "0.17.0",
         \\    .dependencies = .{
         \\        .zstaller = .{ .path = "../zstaller" },
         \\    },

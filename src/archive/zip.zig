@@ -120,7 +120,14 @@ test "unzip reads what write wrote" {
     const io = std.testing.io;
     var out: Writer.Allocating = .init(gpa);
     defer out.deinit();
-    const text = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "hello zip "; var b: [s.len * 200]u8 = undefined; for (0..200) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
+    const text = (comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        const s = "hello zip ";
+        var b: [s.len * 200]u8 = undefined;
+        for (0..200) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+        const c = b;
+        break :blk &c;
+    });
     try write(gpa, &out.writer, &.{
         .{ .path = "manifest.json", .data = text },
         .{ .path = "server/app", .data = "\x00\x01\x02", .mode = 0o755 },

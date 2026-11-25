@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - name: Build installers
         run: |
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"

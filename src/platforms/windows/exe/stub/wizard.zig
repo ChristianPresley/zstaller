@@ -1121,7 +1121,7 @@ const Wizard = struct {
                 return 0;
             },
             w32.WM_DESTROY => {
-                w32.PostQuitMessage(@intFromEnum(wz.outcome));
+                w32.PostQuitMessage(@backingInt(wz.outcome));
                 return 0;
             },
             else => return w32.DefWindowProcW(hwnd, msg, wp, lp),

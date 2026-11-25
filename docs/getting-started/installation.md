@@ -5,7 +5,7 @@ lead: zstaller is a Zig package. You add it to your project like any other depen
 
 ## What you need
 
-- **Zig 0.16.0.** zstaller is written for Zig 0.16.0 and checked against it in CI. Download it from [ziglang.org](https://ziglang.org/download/).
+- **Zig 0.17.0.** zstaller is written for Zig 0.17.0 and checked against it in CI. Download it from [ziglang.org](https://ziglang.org/download/).
 - **Any host Zig supports.** Linux, Windows and macOS can all build every installer, for every target. You do not need Windows to build the Windows installers, or Ubuntu to build the `.deb`.
 - **Nothing else.** No WiX, NSIS, `dpkg-deb`, `tar`, MSVC, Windows SDK or third-party Zig packages.
 
@@ -54,14 +54,14 @@ An absolute path fails with `expected path relative to build root; found absolut
 
 ## Describe your package
 
-zstaller reads four fields from `build.zig.zon`. Zig 0.16 accepts `description` and `license` alongside its own fields, so add them at the top level:
+zstaller reads four fields from `build.zig.zon`. Zig 0.17 accepts `description` and `license` alongside its own fields, so add them at the top level:
 
 ```zig
 .{
     .name = .myapp,
     .version = "1.2.0",
     .fingerprint = 0x...,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .description = "A tool that does useful things",
     .license = "Apache-2.0",
     .dependencies = .{ ... },
