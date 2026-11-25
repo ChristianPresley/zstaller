@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A changed `SOURCE_DATE_EPOCH` did not rebuild the installers on Zig 0.17:
+  `zig build` reused its cached build configuration, so the packages kept the
+  timestamps of the earlier build. When `source_date_epoch` is not set,
+  zstaller now marks the configuration as not cacheable, so `build.zig` runs
+  again on every `zig build` and the variable always takes effect. The
+  packaging steps stay cached. `zig build --cache-poison=disallowed` now fails
+  for such a project; set `source_date_epoch` to keep the configuration
+  cacheable.
 - `scripts/release.ps1 -Tag` passed the installers to `gh release create`
   as one string, so the upload failed with "no matches found".
 
