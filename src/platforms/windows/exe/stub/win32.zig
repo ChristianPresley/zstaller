@@ -759,9 +759,9 @@ pub const RestartManager = struct {
         const name = std.unicode.utf8ToUtf16LeStringLiteral("rstrtmgr.dll");
         const module = LoadLibraryExW(name, null, LOAD_LIBRARY_SEARCH_SYSTEM32) orelse return null;
         var rm: RestartManager = undefined;
-        inline for (@typeInfo(RestartManager).@"struct".fields) |f| {
-            const proc = GetProcAddress(module, f.name ++ "") orelse return null;
-            @field(rm, f.name) = @ptrCast(@alignCast(proc));
+        inline for (@typeInfo(RestartManager).@"struct".field_names) |f_name| {
+            const proc = GetProcAddress(module, f_name ++ "") orelse return null;
+            @field(rm, f_name) = @ptrCast(@alignCast(proc));
         }
         return rm;
     }

@@ -604,8 +604,9 @@ pub fn createPackTool(zb: *Build) *Build.Step.Compile {
 /// `addInstallers` with an explicit zstaller builder, so zstaller's own
 /// build.zig can use the API on itself.
 pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
-    const top = b.allocator.create(Build.Step) catch @panic("OOM");
-    top.* = .init(.{ .id = .custom, .name = "zstaller installers", .owner = b });
+    const top_info = b.allocator.create(Build.Step.TopLevel) catch @panic("OOM");
+    top_info.* = .{ .step = .init(.{ .tag = .top_level, .name = "zstaller installers", .owner = b }), .description = "zstaller installers" };
+    const top = &top_info.step;
     const opts = b.allocator.create(Options) catch @panic("OOM");
     opts.* = options;
 
@@ -802,7 +803,7 @@ fn resolveMetadata(b: *Build, options: Options) MetadataResult {
     const io = b.graph.io;
     const path = options.manifest_path;
     var diag: Metadata.Diagnostic = .{};
-    var m = Metadata.load(b.allocator, io, b.build_root.handle, path, &diag) catch |err| switch (err) {
+    var m = Metadata.load(b.allocator, io, std.Io.Dir.cwd(), b.root.joinString(b.allocator, path) catch @panic("OOM"), &diag) catch |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
         error.InvalidSyntax, error.NotAStruct, error.MissingField, error.InvalidField => return .{ .failed = b.fmt("{s}: {f}", .{ path, diag }) },
         else => return .{ .failed = b.fmt("cannot read {s}: {t}", .{ path, err }) },

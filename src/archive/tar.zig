@@ -171,11 +171,11 @@ test "directory gets trailing slash and 0755" {
 }
 
 test "long paths split into prefix" {
-    const long = "./usr/share/" ++ "a" ** 60 ++ "/" ++ "b" ** 60;
+    const long = "./usr/share/" ++ (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "a"; var b: [s.len * 60]u8 = undefined; for (0..60) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) ++ "/" ++ (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "b"; var b: [s.len * 60]u8 = undefined; for (0..60) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; });
     const name, const prefix = try splitPath(long);
-    try testing.expectEqualStrings("b" ** 60, name);
-    try testing.expectEqualStrings("./usr/share/" ++ "a" ** 60, prefix);
-    try testing.expectError(error.NameTooLong, splitPath("x" ** 101));
+    try testing.expectEqualStrings((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "b"; var b: [s.len * 60]u8 = undefined; for (0..60) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }), name);
+    try testing.expectEqualStrings("./usr/share/" ++ (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "a"; var b: [s.len * 60]u8 = undefined; for (0..60) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }), prefix);
+    try testing.expectError(error.NameTooLong, splitPath((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 101]u8 = undefined; for (0..101) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; })));
 }
 
 test "archive is readable by std.tar" {

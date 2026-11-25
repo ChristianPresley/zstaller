@@ -183,7 +183,7 @@ fn peChecksum(image: []const u8, checksum_offset: usize) u32 {
 /// A minimal PE32+ image with one section holding a debug directory (a
 /// CodeView entry and a repro entry) followed by `code`.
 fn testImage(code: []const u8, timestamp: u32, guid: [16]u8, checksum: u32) [0x400]u8 {
-    var img = [_]u8{0} ** 0x400;
+    var img = @as([0x400]u8, @splat(0));
     const w = struct {
         fn int(buf: []u8, comptime T: type, off: usize, v: T) void {
             std.mem.writeInt(T, buf[off..][0..@sizeOf(T)], v, .little);
@@ -263,7 +263,7 @@ test "normalize recomputes a checksum the linker set" {
 }
 
 test "normalize rejects non-PE input" {
-    var junk = [_]u8{0} ** 128;
+    var junk = @as([128]u8, @splat(0));
     try std.testing.expectError(error.InvalidPe, normalize(&junk));
     var img = testImage("code", 1, @splat(1), 0);
     std.mem.writeInt(u32, img[0x3c..][0..4], 0x3fe, .little);

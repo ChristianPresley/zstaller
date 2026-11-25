@@ -106,9 +106,9 @@ fn handle(io: std.Io, a: std.mem.Allocator, w: *std.Io.Writer, line: []const u8,
 fn reply(w: *std.Io.Writer, id: Value, body: anytype) !void {
     try w.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
     try std.json.Stringify.value(id, .{}, w);
-    inline for (@typeInfo(@TypeOf(body)).@"struct".fields) |f| {
-        try w.print(",\"{s}\":", .{f.name});
-        try std.json.Stringify.value(@field(body, f.name), .{}, w);
+    inline for (@typeInfo(@TypeOf(body)).@"struct".field_names) |f_name| {
+        try w.print(",\"{s}\":", .{f_name});
+        try std.json.Stringify.value(@field(body, f_name), .{}, w);
     }
     try w.writeAll("}\n");
 }

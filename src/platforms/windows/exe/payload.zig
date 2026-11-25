@@ -141,7 +141,7 @@ const testing = std.testing;
 
 test "round trip" {
     const entries = [_]Entry{
-        .{ .path = "app.exe", .data = "MZ" ++ "\x00" ** 100 },
+        .{ .path = "app.exe", .data = "MZ" ++ (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "\x00"; var b: [s.len * 100]u8 = undefined; for (0..100) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) },
         .{ .path = "docs/README.md", .data = "# hi\n" },
         .{ .path = "empty.txt", .data = "" },
     };
@@ -177,7 +177,7 @@ test "rejects corrupt payloads" {
 }
 
 test "rejects a payload whose compressed body was changed" {
-    const bytes = try encode(testing.allocator, &.{.{ .path = "a", .data = "abc" ** 50 }});
+    const bytes = try encode(testing.allocator, &.{.{ .path = "a", .data = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "abc"; var b: [s.len * 50]u8 = undefined; for (0..50) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) }});
     defer testing.allocator.free(bytes);
     // Every single-byte change after the header, including ones that would
     // still decompress, is caught by the digest.

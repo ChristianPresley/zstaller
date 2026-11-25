@@ -84,7 +84,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, diag: ?*Diagnostic) ParseErro
     const d = diag orelse &scratch;
     d.* = .{};
 
-    var ast = try Ast.parse(gpa, source, .zon);
+    var ast = try Ast.parse(gpa, source, .{ .mode = .zon });
     defer ast.deinit(gpa);
     if (ast.errors.len > 0) {
         const loc = ast.tokenLocation(0, ast.errors[0].token);
@@ -105,7 +105,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, diag: ?*Diagnostic) ParseErro
         return error.InvalidSyntax;
     }
 
-    const root = switch (Zoir.Node.Index.root.get(zoir)) {
+    const root = switch (Zoir.Node.Index.root.get(&zoir)) {
         .struct_literal => |s| s,
         .empty_literal => {
             d.* = .{ .field = "name", .message = "missing required field" };
@@ -122,7 +122,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, diag: ?*Diagnostic) ParseErro
     var description_node: ?Zoir.Node = null;
     var license_node: ?Zoir.Node = null;
     for (root.names, 0..) |field_name, i| {
-        const key = field_name.get(zoir);
+        const key = field_name.get(&zoir);
         const slot = if (std.mem.eql(u8, key, "name"))
             &name_node
         else if (std.mem.eql(u8, key, "version"))
@@ -133,14 +133,14 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, diag: ?*Diagnostic) ParseErro
             &license_node
         else
             continue;
-        slot.* = root.vals.at(@intCast(i)).get(zoir);
+        slot.* = root.vals.at(@intCast(i)).get(&zoir);
     }
 
     const name_src: []const u8 = switch (name_node orelse {
         d.* = .{ .field = "name", .message = "missing required field" };
         return error.MissingField;
     }) {
-        .enum_literal => |s| s.get(zoir),
+        .enum_literal => |s| s.get(&zoir),
         .string_literal => |s| s,
         else => {
             d.* = .{ .field = "name", .message = "expected an enum literal such as .myapp" };
