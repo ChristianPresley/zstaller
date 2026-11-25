@@ -6,7 +6,8 @@
 # the repository at different paths, each with its own local and global Zig
 # cache, and checks that every installer is byte-identical. Then changes
 # SOURCE_DATE_EPOCH and checks that the cached installers are rebuilt with
-# the new timestamp rather than reused.
+# the new timestamp rather than reused: once after copying the sources
+# again, and once in place, where nothing but the variable changes.
 #
 # Pass a file name to also write the installers' SHA256SUMS there, so builds
 # on different hosts can be compared. Runs on Linux and in Git Bash on
@@ -22,6 +23,10 @@ export SOURCE_DATE_EPOCH=1700000000
 build() { # <copy dir>
   mkdir -p "$1"
   (cd "$repo" && git ls-files -z --cached --others --exclude-standard | tar --null -cf - -T -) | tar -xf - -C "$1"
+  rebuild "$1"
+}
+
+rebuild() { # <copy dir>
   (cd "$1/examples/sample" &&
     ZIG_LOCAL_CACHE_DIR="$1-cache" ZIG_GLOBAL_CACHE_DIR="$1-global-cache" zig build installer)
   # --binary: the same "<sum> *<name>" lines on Linux and Windows.
@@ -49,4 +54,14 @@ while read -r sum name; do
     *) [ "$new" != "$sum" ] || { echo "$name was not rebuilt for the new SOURCE_DATE_EPOCH"; exit 1; } ;;
   esac
 done <"$work/a-second-copy-at-a-longer-path.sums"
+
+# No file changes here, so only the variable can cause the rebuild. The
+# installers must be the first build's again, byte for byte.
+echo "== rebuild in place with the first SOURCE_DATE_EPOCH"
+export SOURCE_DATE_EPOCH=1700000000
+rebuild "$work/a"
+if ! diff "$work/a.sums" "$work/a-second-copy-at-a-longer-path.sums"; then
+  echo "installers were not rebuilt in place for the changed SOURCE_DATE_EPOCH"
+  exit 1
+fi
 echo "Reproducibility test passed"

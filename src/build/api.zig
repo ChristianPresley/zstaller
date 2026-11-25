@@ -430,6 +430,16 @@ pub const Options = struct {
     /// variable when it is set, else 315532800 (1980-01-01). The value is
     /// passed to the packaging steps as an argument, so changing it
     /// rebuilds the installers instead of reusing cached ones.
+    ///
+    /// When this is null, zstaller reads the environment while build.zig
+    /// runs. Zig cannot track that read, so zstaller marks the build
+    /// configuration as not cacheable (`std.Build.Graph.poisonCache`):
+    /// build.zig then runs again on every `zig build`, and a changed
+    /// `SOURCE_DATE_EPOCH` always takes effect. The packaging steps stay
+    /// cached. Two consequences: `zig build --cache-poison=disallowed`
+    /// fails, and `zig build --cache-poison=ignored` can keep installers
+    /// built for an earlier `SOURCE_DATE_EPOCH`. Setting this option keeps
+    /// the configuration cacheable and avoids both.
     source_date_epoch: ?u64 = null,
 };
 
@@ -629,6 +639,11 @@ pub fn addInstallersWith(b: *Build, zb: *Build, options: Options) Installers {
     }
     if (!config_ok) return .{ .step = top, .outputs = &.{} };
 
+    // Zig caches the result of build.zig and does not know that it read the
+    // environment. Without this, a later build with another
+    // SOURCE_DATE_EPOCH (or with the variable newly set or unset) would
+    // reuse the configuration and its old `--mtime` argument.
+    if (opts.source_date_epoch == null) b.graph.poisonCache();
     const epoch = opts.source_date_epoch orelse
         if (b.graph.environ_map.get("SOURCE_DATE_EPOCH")) |value|
             std.fmt.parseInt(u64, value, 10) catch {
