@@ -267,7 +267,7 @@ pub fn write(gpa: Allocator, out: *Writer, p: Product) Error!void {
             h.update(sc.name);
             h.update(&.{0});
             h.update(sc.target);
-            h.update(&.{ @intFromBool(sc.start_menu), @intFromEnum(sc.desktop) });
+            h.update(&.{ @intFromBool(sc.start_menu), @backingInt(sc.desktop) });
         }
         for (p.program_shortcuts) |ps| {
             h.update(ps.name);

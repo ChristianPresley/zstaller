@@ -19,7 +19,7 @@
     .fingerprint = 0xf10b76c3cd2fce96,
     .description = "Example program packaged with zstaller",
     .license = "Apache-2.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .zstaller = .{ .path = "../../.." },
     },

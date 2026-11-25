@@ -517,7 +517,14 @@ test "stream name encoding" {
     }, enc);
     const cab = try encodeStreamName(a, "a-b", false);
     try testing.expectEqualSlices(u16, &.{ 0x4800 + 36, '-', 0x4800 + 37 }, cab);
-    try testing.expectError(error.StreamNameTooLong, encodeStreamName(a, (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 63]u8 = undefined; for (0..63) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }), false));
+    try testing.expectError(error.StreamNameTooLong, encodeStreamName(a, (comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        const s = "x";
+        var b: [s.len * 63]u8 = undefined;
+        for (0..63) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+        const c = b;
+        break :blk &c;
+    }), false));
 }
 
 test "codepage conversion" {

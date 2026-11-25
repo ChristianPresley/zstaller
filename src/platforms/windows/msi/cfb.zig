@@ -455,8 +455,22 @@ test "round trip small, large and empty streams" {
         .{ .name = utf16("small"), .data = "hello" },
         .{ .name = utf16("big"), .data = big },
         .{ .name = utf16("empty"), .data = "" },
-        .{ .name = utf16("edge"), .data = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 4096]u8 = undefined; for (0..4096) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) },
-        .{ .name = utf16("under"), .data = (comptime blk: { @setEvalBranchQuota(1_000_000); const s = "y"; var b: [s.len * 4095]u8 = undefined; for (0..4095) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; }) },
+        .{ .name = utf16("edge"), .data = (comptime blk: {
+            @setEvalBranchQuota(1_000_000);
+            const s = "x";
+            var b: [s.len * 4096]u8 = undefined;
+            for (0..4096) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+            const c = b;
+            break :blk &c;
+        }) },
+        .{ .name = utf16("under"), .data = (comptime blk: {
+            @setEvalBranchQuota(1_000_000);
+            const s = "y";
+            var b: [s.len * 4095]u8 = undefined;
+            for (0..4095) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+            const c = b;
+            break :blk &c;
+        }) },
     };
     var out: Writer.Allocating = .init(gpa);
     defer out.deinit();
@@ -518,6 +532,13 @@ test "rejects duplicate and invalid names" {
         .{ .name = utf16("ABC"), .data = "" },
     }));
     try testing.expectError(error.InvalidName, write(gpa, &out.writer, @splat(0), &.{
-        .{ .name = utf16((comptime blk: { @setEvalBranchQuota(1_000_000); const s = "x"; var b: [s.len * 32]u8 = undefined; for (0..32) |i| @memcpy(b[i * s.len ..][0..s.len], s); const c = b; break :blk &c; })), .data = "" },
+        .{ .name = utf16((comptime blk: {
+            @setEvalBranchQuota(1_000_000);
+            const s = "x";
+            var b: [s.len * 32]u8 = undefined;
+            for (0..32) |i| @memcpy(b[i * s.len ..][0..s.len], s);
+            const c = b;
+            break :blk &c;
+        })), .data = "" },
     }));
 }

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- zstaller now needs Zig 0.17.0 and no longer builds with Zig 0.16. The code,
+  the sample, the documentation and CI moved to the 0.17 language and build
+  API. `zig build -l` in a project that uses zstaller lists one extra step,
+  "zstaller installers".
+
 ### Added
 
 - A documentation site in `docs/`, published to GitHub Pages at

@@ -25,7 +25,7 @@ them: it builds `gallery/` (the sample application with every documented
 option exposed as a `-D` flag) once per scenario, clicks through the Windows
 installers under Wine on a virtual display, and installs the `.deb` on the
 machine it runs on. Run it on a disposable Linux machine or container, as
-root, with zig 0.16.0, wine, Xvfb, xdotool, ImageMagick, msitools, dpkg and
+root, with zig 0.17.0, wine, Xvfb, xdotool, ImageMagick, msitools, dpkg and
 lintian installed:
 
 ```sh
